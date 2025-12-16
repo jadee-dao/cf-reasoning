@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Embedding Analysis Viewer</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            background: #f0f2f5;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Stats Header */
+        .stats-bar {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            flex: 1;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-top: 5px;
+        }
+
+        /* Controls */
+        .controls {
+            margin-bottom: 20px;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        select {
+            padding: 10px;
+            font-size: 16px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            width: 100%;
+            max-width: 400px;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .tab-btn {
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            background: #ddd;
+            cursor: pointer;
+            border-radius: 4px;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+
+        .tab-btn.active {
+            background: #0066cc;
+            color: white;
+        }
+
+        .section {
+            display: none;
+        }
+
+        .section.active {
+            display: block;
+        }
+
+        /* Table */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        th,
+        td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+            color: #555;
+            text-transform: uppercase;
+            font-size: 0.85em;
+        }
+
+        tr:hover {
+            background-color: #f1f7ff;
+            cursor: pointer;
+        }
+
+        tr.active-row {
+            background-color: #e3effd;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal-content {
+            background: white;
+            width: 90%;
+            max-width: 1000px;
+            max-height: 90vh;
+            border-radius: 8px;
+            padding: 20px;
+            overflow-y: auto;
+            position: relative;
+        }
+
+        .close-btn {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+            font-size: 24px;
+            cursor: pointer;
+            color: #666;
+            font-weight: bold;
+        }
+
+        /* Utility */
+        .rank-badge-sm {
+            background: #555;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.8em;
+        }
+
+        /* Cards */
+        .pair-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            border-left: 5px solid transparent;
+        }
+
+        .pair-card.rank-1 {
+            border-left-color: #ffd700;
+        }
+
+        /* Gold */
+        .pair-card.rank-2 {
+            border-left-color: #c0c0c0;
+        }
+
+        /* Silver */
+        .pair-card.rank-3 {
+            border-left-color: #cd7f32;
+        }
+
+        /* Bronze */
+
+        .pair-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+
+        .rank-badge {
+            background: #333;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            font-weight: bold;
+        }
+
+        .score {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #0066cc;
+        }
+
+        .comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .item {
+            text-align: center;
+        }
+
+        .media-container {
+            position: relative;
+            border-radius: 4px;
+            overflow: hidden;
+            background: #000;
+        }
+
+        video {
+            width: 100%;
+            display: block;
+        }
+
+        img {
+            width: 100%;
+            display: block;
+            border-top: 1px solid #333;
+        }
+
+        .label {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        .debug-label {
+            position: absolute;
+            top: 0;
+            left: 0;
+            background: rgba(0, 0, 0, 0.6);
+            color: white;
+            font-size: 0.7em;
+            padding: 2px 6px;
+        }
+
+        .media-container img+.debug-label {
+            top: auto;
+            bottom: 0;
+        }
+
+        /* Label for bottom image */
+
+        .text-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.7);
+            /* Darker, more solid background */
+            color: #ffffff;
+            font-size: 14px;
+            /* Larger font */
+            line-height: 1.4;
+            padding: 10px;
+            border-bottom: 1px solid #444;
+            max-height: 120px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            font-family: monospace;
+            /* Better for reading structured text */
+            z-index: 10;
+        }
+
+        .text-overlay:empty {
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Embedding Analysis Results</h1>
+
+        <div class="controls">
+            <select id="fileSelect">
+                <option value="">Loading...</option>
+            </select>
+        </div>
+
+        <div id="loading" style="display:none; text-align: center; padding: 20px;">Loading data...</div>
+
+        <div id="dashboard" style="display:none;">
+            <!-- Stats Bar -->
+            <div class="stats-bar">
+                <div class="stat-card">
+                    <div class="stat-label">Highest Similarity</div>
+                    <div class="stat-value" id="maxScore">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Lowest Similarity</div>
+                    <div class="stat-value" id="minScore">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Pairs</div>
+                    <div class="stat-value" id="totalCount">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Strategy</div>
+                    <div class="stat-value" id="strategyName">-</div>
+                </div>
+            </div>
+
+            <!-- Tabs -->
+            <div class="tabs">
+                <button class="tab-btn active" onclick="switchTab('most')">Top 5 Most Similar</button>
+                <button class="tab-btn" onclick="switchTab('least')">Top 5 Least Similar</button>
+                <button class="tab-btn" onclick="switchTab('leaderboard')">Leaderboard (All Pairs)</button>
+            </div>
+
+            <!-- Content -->
+            <div id="most" class="section active"></div>
+            <div id="least" class="section"></div>
+            <div id="leaderboard" class="section">
+                <table>
+                    <thead>
+                        <tr>
+                            <th width="80">Rank</th>
+                            <th width="100">Score</th>
+                            <th>Pairing (ID 1 vs ID 2)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="leaderboardBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div id="detailModal" class="modal-overlay" onclick="closeModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <span class="close-btn" onclick="closeModal()">×</span>
+            <div id="modalBody"></div>
+        </div>
+    </div>
+
+    <script>
+        const fileSelect = document.getElementById('fileSelect');
+        const dashboard = document.getElementById('dashboard');
+        const loadingDiv = document.getElementById('loading');
+        const modal = document.getElementById('detailModal');
+        const modalBody = document.getElementById('modalBody');
+
+        // Load file list
+        fetch('/api/list')
+            .then(response => response.json())
+            .then(files => {
+                fileSelect.innerHTML = '<option value="">-- Choose a Result File --</option>';
+                files.forEach(file => {
+                    const option = document.createElement('option');
+                    option.value = file;
+                    option.textContent = file;
+                    fileSelect.appendChild(option);
+                });
+            });
+
+        // Handle selection
+        fileSelect.addEventListener('change', (e) => {
+            const filename = e.target.value;
+            if (!filename) {
+                dashboard.style.display = 'none';
+                return;
+            }
+
+            loadingDiv.style.display = 'block';
+            dashboard.style.display = 'none';
+
+            fetch(`/api/results/${filename}`)
+                .then(response => response.json())
+                .then(data => {
+                    loadingDiv.style.display = 'none';
+                    dashboard.style.display = 'block';
+                    renderDashboard(data);
+                });
+        });
+
+        function switchTab(tabId) {
+            // Update buttons
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+
+            // Update sections
+            document.querySelectorAll('.section').forEach(sec => sec.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+        }
+
+        function openModal(id1, id2, score, rank, strategy) {
+            const html = `
+                <h2>Pair Detail #${rank}</h2>
+                <div class="pair-card" style="box-shadow:none; border:none; padding:0;">
+                    <div class="pair-header">
+                        <span class="rank-badge">#${rank} Ranking</span>
+                        <span class="score">Score: ${score}</span>
+                    </div>
+                    <div class="comparison">
+                        ${renderItem(id1, strategy)}
+                        ${renderItem(id2, strategy)}
+                    </div>
+                </div>
+            `;
+            modalBody.innerHTML = html;
+            modal.style.display = 'flex';
+        }
+
+        function closeModal(e) {
+            modal.style.display = 'none';
+        }
+
+        function renderDashboard(data) {
+            // Stats
+            document.getElementById('strategyName').textContent = data.strategy.toUpperCase();
+
+            // Data is sorted Descending (Best -> Worst)
+            const allPairs = data.all_pairs;
+            const totalPairs = data.total_pairs;
+
+            document.getElementById('totalCount').textContent = totalPairs;
+
+            // Max is the first item (Score 1.0 or high), Min is the last item
+            const maxVal = allPairs.length > 0 ? allPairs[0].score : 0;
+            const minVal = allPairs.length > 0 ? allPairs[allPairs.length - 1].score : 0;
+
+            document.getElementById('maxScore').textContent = maxVal.toFixed(4);
+            document.getElementById('minScore').textContent = minVal.toFixed(4);
+
+            // Slice Lists
+            const top5 = allPairs.slice(0, 5);
+
+            // Bottom 5: The last 5 items. 
+            // allPairs is [Best ... Worst].
+            // allPairs.slice(-5) gives [5th Worst, 4th Worst, ..., Worst]. (Descending score: 0.2, 0.15, 0.1)
+            // User wants "order the 5 least similar from worst to best".
+            // So we want [Worst, 2nd Worst, ...].
+            // So slice last 5, and REVERSE it.
+            let bottom5 = allPairs.slice(-5).reverse();
+
+            // Render Lists
+            // For Rank:
+            // Top 5: Rank is simply index + 1
+            // Bottom 5: Rank is Total - Index (since we reversed it, the first item is the Last global item i.e. Rank Total)
+
+            document.getElementById('most').innerHTML = renderList(top5, data.strategy, "Most Similar", 1, totalPairs);
+            document.getElementById('least').innerHTML = renderList(bottom5, data.strategy, "Least Similar", totalPairs, totalPairs, true);
+
+            // Render Leaderboard Table
+            renderLeaderboard(allPairs, data.strategy);
+        }
+
+        function renderLeaderboard(pairs, strategy) {
+            const tbody = document.getElementById('leaderboardBody');
+            let html = '';
+
+            pairs.forEach((pair, index) => {
+                const rank = index + 1;
+                const score = pair.score.toFixed(4);
+                const id1 = pair.pair[0];
+                const id2 = pair.pair[1];
+
+                // Using onclick with quoted strings carefully
+                html += `
+                    <tr onclick="openModal('${id1}', '${id2}', '${score}', ${rank}, '${strategy}')">
+                        <td><span class="rank-badge-sm">#${rank}</span></td>
+                        <td style="font-weight:bold; color: #0066cc;">${score}</td>
+                        <td>${id1} <span style="color:#aaa; margin:0 10px;">vs</span> ${id2}</td>
+                    </tr>
+                `;
+            });
+            tbody.innerHTML = html;
+        }
+
+        function renderList(pairs, strategy, type, startRank, totalPairs, isReversed = false) {
+            if (!pairs || pairs.length === 0) return '<div class="pair-card">No data available</div>';
+
+            let html = '';
+
+            pairs.forEach((pair, index) => {
+                const id1 = pair.pair[0];
+                const id2 = pair.pair[1];
+                const score = pair.score.toFixed(4);
+
+                // Calculate Rank
+                // If Top: 1, 2, 3... -> startRank + index
+                // If Bottom (Reversed): Total, Total-1, ... -> startRank - index
+
+                let rank;
+                if (!isReversed) {
+                    rank = startRank + index;
+                } else {
+                    rank = startRank - index;
+                }
+
+                html += `
+                    <div class="pair-card rank-${rank}">
+                        <div class="pair-header">
+                            <span class="rank-badge">#${rank} of ${totalPairs} Similarity Ranking</span>
+                            <span class="score">Score: ${score}</span>
+                        </div>
+                        <div class="comparison">
+                            ${renderItem(id1, strategy)}
+                            ${renderItem(id2, strategy)}
+                        </div>
+                    </div>
+                `;
+            });
+
+            return html;
+        }
+
+        function renderItem(id, strategy) {
+            // Unique ID for the text container
+            const textId = `text-${id}-${Math.floor(Math.random() * 1000)}`;
+
+            // Only fetch text if strategy is 'text', but logic is generic enough
+            // We use a small inline script or fetch after render? 
+            // Better: Return HTML with a data-attribute and use a single Observer or loop to load text?
+            // Simplest: Generic fetch script below.
+
+            setTimeout(() => {
+                fetch(`/debug/text/${strategy}/${id}`)
+                    .then(r => {
+                        if (r.ok) return r.text();
+                        return null;
+                    })
+                    .then(text => {
+                        if (text) {
+                            const el = document.getElementById(textId);
+                            if (el) el.textContent = text;
+                        }
+                    });
+            }, 100);
+
+            return `
+                <div class="item">
+                    <div class="label">${id}</div>
+                    <div class="media-container">
+                        <div class="debug-label" style="top:5px; left:5px;">Video</div>
+                        <video src="/video/${id}" autoplay loop muted playsinline></video>
+                        
+                        <div style="position:relative;">
+                            <img src="/debug/${strategy}/${id}" alt="Debug View">
+                            <div class="debug-label" style="bottom:5px; left:5px; top:auto;">Debug Input</div>
+                            
+                            <!-- Text Overlay -->
+                            <div id="${textId}" class="text-overlay"></div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+    </script>
+</body>
+
+</html>

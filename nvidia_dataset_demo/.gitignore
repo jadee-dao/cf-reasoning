@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+
+# Data
+extracted_data/
+camera/
+.cache/
+
+# Models
+*.pt
+*.pth
+*.safetensors
+*.onnx
+
+# Outputs and Reuslts
+scripts/analysis_results/
+scripts/runs/
+
+# System and IDE
+.DS_Store
+.vscode/
+.idea/
+.env
