@@ -17,6 +17,8 @@ This project explores various **embedding strategies** for analyzing autonomous 
     - Visualizes similarity search results.
     - Shows "Debug Inputs" (what the model actually saw: masked images, heatmaps, text).
     - Side-by-side video comparison.
+  
+![Viewer Screenshot](assets/viewer_screenshot.png)
 
 ## Installation
 
@@ -61,8 +63,6 @@ Open **http://localhost:8080** in your browser.
 ## Viewer Interface
 
 The browser-based viewer (`viewer_app.py`) provides a rich interface for interacting with the analysis results.
-
-![Viewer Screenshot](assets/viewer_screenshot.png)
 
 ### Key Features:
 1.  **Strategy Selection:**  The dropdown menu allows you to switch between different `results_*.json` files (e.g., VLM, Object Semantics, Naive) instantly.
