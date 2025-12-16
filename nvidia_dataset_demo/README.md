@@ -57,6 +57,30 @@ python3 viewer_app.py
 
 Open **http://localhost:8080** in your browser.
 
+
+## Viewer Interface
+
+The browser-based viewer (`viewer_app.py`) provides a rich interface for interacting with the analysis results.
+
+![Viewer Screenshot](assets/viewer_screenshot.png)
+
+### Key Features:
+1.  **Strategy Selection:**  The dropdown menu allows you to switch between different `results_*.json` files (e.g., VLM, Object Semantics, Naive) instantly.
+2.  **Statistics Bar:** Displays the highest/lowest similarity scores and total pairs analyzed for the current strategy.
+3.  **Similarity Ranking:**
+    *   **Top 5 Most Similar:** Shows pairs with high cosine similarity (visually or semantically close).
+    *   **Top 5 Least Similar:** Shows pairs that are distinct.
+    *   **Leaderboard:** A sortable table of all pairs.
+4.  **Debug Inputs:**
+    *   Clicking on a pair opens a **Detail Modal**.
+    *   This shows the **Side-by-Side Videos** (autoplay).
+    *   **Debug Image/Text:** Shows exactly what the model "saw".
+        *   *Naive:* Original Image.
+        *   *Foreground:* Masked Foreground (black background).
+        *   *VLM/Text:* Text Overlay of the generated caption.
+        *   *Video:* Filmstrip of sampled frames.
+        *   *Object Semantics:* Detailed object inventory list.
+
 ## Directory Structure
 
 - `extracted_data/`: Dataset images and videos.
