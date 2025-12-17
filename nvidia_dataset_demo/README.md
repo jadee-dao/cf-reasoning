@@ -28,6 +28,13 @@ cd scripts
 pip install torch transformers sentence-transformers ultralytics flask opencv-python scikit-learn matplotlib
 ```
 
+Download a subset of the PhysicalAI Autonomous Vehicles dataset
+```
+mkdir -p nvidia_dataset_demo && wget "https://huggingface.co/datasets/nvidia/PhysicalAI-Autonomous-Vehicles/resolve/main/camera/camera_front_wide_120fov/camera_front_wide_120fov.chunk_0000.zip" -O nvidia_dataset_demo/dataset.zip
+unzip -q nvidia_dataset_demo/camera/camera_front_wide_120fov/camera_front_wide_120fov.chunk_0000.zip -d
+```
+This should create a folder in `nvidia_dataset_demo/extracted_data`.
+
 ## Usage
 
 ### 1. Generate Embeddings & Run Analysis
