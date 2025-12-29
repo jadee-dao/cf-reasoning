@@ -12,6 +12,9 @@ This project explores various **embedding strategies** for analyzing autonomous 
     5.  **VLM (BLIP):** Generates a natural language caption for the entire scene.
     6.  **Video (X-CLIP):** Embeds the full video clip by processing 8 temporal frames.
     7.  **Object Semantics:** "Bag of Objects" approach – detects objects, individually captions them, and aggregates into a detailed text description.
+    8.  **ViT Attention:** Use ViT attention weights to mask image (e.g. threshold at 0.35) for a vision embedding. This currently implements FASTViT, but can be extended to any ViT model.
+    9.  **VLM Description:** Uses a lightweight VLM to generate a description of the scene in a given image.
+    10. **VLM Hazard:** Uses a lightweight VLM to generate a focused description on the hazards and uncertainties of the scene in a given image.
 
 - **Browser-Based Viewer:**
     - Visualizes similarity search results.
