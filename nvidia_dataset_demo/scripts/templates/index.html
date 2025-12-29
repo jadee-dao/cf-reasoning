@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Embedding Analysis Viewer</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -343,11 +344,27 @@
                 <button class="tab-btn active" onclick="switchTab('most')">Top 5 Most Similar</button>
                 <button class="tab-btn" onclick="switchTab('least')">Top 5 Least Similar</button>
                 <button class="tab-btn" onclick="switchTab('leaderboard')">Leaderboard (All Pairs)</button>
+                <button class="tab-btn" onclick="switchTab('scatter')">Embedding Space</button>
             </div>
 
             <!-- Content -->
             <div id="most" class="section active"></div>
             <div id="least" class="section"></div>
+            <div id="scatter" class="section">
+                <div style="margin-bottom:15px; display:flex; justify-content:flex-end; align-items:center; gap:10px;">
+                    <label for="projectionSelect" style="font-weight:bold;">Projection Method:</label>
+                    <select id="projectionSelect" style="width:150px; padding:5px; margin:0;"
+                        onchange="updateScatter()">
+                        <option value="tsne">t-SNE</option>
+                        <option value="umap">UMAP</option>
+                        <option value="pca">PCA</option>
+                    </select>
+                </div>
+                <div id="scatterPlot"
+                    style="width:100%; height:600px; background:white; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.1);">
+                </div>
+                <div id="scatterDetail" style="margin-top:20px;"></div>
+            </div>
             <div id="leaderboard" class="section">
                 <table>
                     <thead>
@@ -377,6 +394,9 @@
         const loadingDiv = document.getElementById('loading');
         const modal = document.getElementById('detailModal');
         const modalBody = document.getElementById('modalBody');
+
+        let currentScatterData = null;
+        let currentStrategy = null;
 
         // Load file list
         fetch('/api/list')
@@ -419,6 +439,11 @@
             // Update sections
             document.querySelectorAll('.section').forEach(sec => sec.classList.remove('active'));
             document.getElementById(tabId).classList.add('active');
+
+            // Re-render plot if switching to scatter to ensure sizing
+            if (tabId === 'scatter' && currentScatterData) {
+                updateScatter();
+            }
         }
 
         function openModal(id1, id2, score, rank, strategy) {
@@ -481,6 +506,13 @@
 
             // Render Leaderboard Table
             renderLeaderboard(allPairs, data.strategy);
+
+            // Render Scatter
+            if (data.points) {
+                currentScatterData = data.points;
+                currentStrategy = data.strategy;
+                updateScatter();
+            }
         }
 
         function renderLeaderboard(pairs, strategy) {
@@ -583,6 +615,56 @@
                     </div>
                 </div>
             `;
+        }
+        function updateScatter() {
+            if (!currentScatterData) return;
+
+            const method = document.getElementById('projectionSelect').value;
+            const points = currentScatterData;
+
+            // Check if method exists (fallback to t-SNE or PCA if missing)
+            let useMethod = method;
+            if (points.length > 0 && !points[0][method]) {
+                if (points[0]['tsne']) useMethod = 'tsne';
+                else if (points[0]['pca']) useMethod = 'pca';
+            }
+
+            const trace = {
+                x: points.map(p => p[useMethod] ? p[useMethod][0] : 0),
+                y: points.map(p => p[useMethod] ? p[useMethod][1] : 0),
+                mode: 'markers',
+                type: 'scatter',
+                text: points.map(p => p.id),
+                marker: { size: 12, color: '#0066cc', opacity: 0.8 },
+                hoverinfo: 'text'
+            };
+
+            const layout = {
+                title: `${useMethod.toUpperCase()} Embedding Space`,
+                hovermode: 'closest',
+                dragmode: 'pan',
+                xaxis: { title: 'Dimension 1', zeroline: false },
+                yaxis: { title: 'Dimension 2', zeroline: false },
+                margin: { t: 40 }
+            };
+
+            Plotly.newPlot('scatterPlot', [trace], layout, { responsive: true });
+
+            document.getElementById('scatterPlot').on('plotly_click', function (data) {
+                const pt = data.points[0];
+                const id = pt.text;
+
+                // Show detail
+                const detailDiv = document.getElementById('scatterDetail');
+                detailDiv.innerHTML = `
+                    <h3>Selected: ${id}</h3>
+                    <div style="background:white; padding:20px; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.1);">
+                        ${renderItem(id, currentStrategy)}
+                    </div>
+                `;
+                // Scroll to detail
+                detailDiv.scrollIntoView({ behavior: 'smooth' });
+            });
         }
     </script>
 </body>

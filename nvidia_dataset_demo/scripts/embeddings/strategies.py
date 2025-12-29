@@ -450,3 +450,253 @@ class ObjectSemanticsStrategy(EmbeddingStrategy):
 
         # 6. Embed
         return self.sbert.encode(description)
+
+
+class FastViTAttentionStrategy(EmbeddingStrategy):
+    """
+    Uses FastVLM's vision encoder (FastViT) to identify important regions 
+    via feature map activation, masks the image to focus on these regions, 
+    and generates a 'focused' embedding.
+    """
+    def load_model(self):
+        if not self.model_loaded:
+            model_id = "apple/FastVLM-1.5B"
+            print(f"Loading FastVLM model: {model_id}...")
+            
+            # Additional import needed for this specific model type if distinct
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+            
+            self.device = get_device()
+            try:
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_id, 
+                    trust_remote_code=True,
+                    torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                    device_map="auto"
+                )
+                self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+                self.model_loaded = True
+            except Exception as e:
+                print(f"Error loading FastVLM: {e}")
+                raise e
+
+    def _extract_vision_features(self, pil_image):
+        # Helper to run vision tower
+        # Check for image processor
+        image_processor = None
+        if hasattr(self.model.model.vision_tower, 'image_processor'):
+            image_processor = self.model.model.vision_tower.image_processor
+            
+        if image_processor:
+            inputs = image_processor(pil_image, return_tensors="pt")
+            pixel_values = inputs['pixel_values'].to(self.model.device)
+        else:
+            # Basic fallback if needed, but FastVLM usually has it
+            print("Warning: No image processor found for FastVLM.")
+            return None
+
+        with torch.no_grad():
+            vision_outputs = self.model.model.vision_tower(pixel_values)
+            if isinstance(vision_outputs, tuple):
+                image_features = vision_outputs[0]
+            else:
+                image_features = vision_outputs
+        return image_features
+
+    def generate_embedding(self, image_path: str, **kwargs) -> np.array:
+        self.load_model()
+        pil_image = Image.open(image_path).convert("RGB")
+        
+        # 1. First Pass: Get Features & Importance Map
+        image_features = self._extract_vision_features(pil_image)
+        if image_features is None:
+            return np.zeros(1) # Fail safe
+            
+        # Determine shape [B, L, D] or [B, D, H, W]
+        if len(image_features.shape) == 3: # [B, L, D]
+            B, L, D = image_features.shape
+            # Assuming square grid for FastViT
+            H = W = int(L**0.5)
+            activation_map = torch.mean(image_features, dim=2) # [B, L]
+            activation_map = activation_map.reshape(B, H, W)
+            importance_map = activation_map[0].cpu().numpy()
+        elif len(image_features.shape) == 4: # [B, D, H, W]
+            activation_map = torch.mean(image_features, dim=1) # [B, H, W]
+            importance_map = activation_map[0].cpu().numpy()
+        else:
+            print(f"Unexpected feature shape: {image_features.shape}")
+            return np.zeros(1)
+
+        # 2. Threshold & Mask
+        importance_map_norm = (importance_map - importance_map.min()) / (importance_map.max() - importance_map.min())
+        
+        # Resize heatmap to original image
+        img_np = np.array(pil_image)
+        heatmap_resized = cv2.resize(importance_map_norm, (img_np.shape[1], img_np.shape[0]))
+        
+        # Threshold
+        threshold = np.mean(heatmap_resized) + 0.5 * np.std(heatmap_resized)
+        mask = heatmap_resized > threshold
+        
+        # Create masked image
+        masked_img_np = img_np.copy()
+        masked_img_np[~mask] = 0 # Black out unimportant
+        masked_pil = Image.fromarray(masked_img_np)
+
+        # 3. Save Debug Visualization
+        if "debug_output_path" in kwargs:
+            # Visualize: Original | Heatmap | Masked
+            import matplotlib.pyplot as plt
+            
+            # Heatmap overlay
+            heatmap_colored = cv2.applyColorMap(np.uint8(255 * heatmap_resized), cv2.COLORMAP_JET)
+            heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
+            overlay = cv2.addWeighted(img_np, 0.6, heatmap_colored, 0.4, 0)
+            
+            fig, ax = plt.subplots(1, 3, figsize=(15, 5))
+            ax[0].imshow(pil_image)
+            ax[0].set_title("Original")
+            ax[0].axis('off')
+            
+            ax[1].imshow(overlay)
+            ax[1].set_title("Importance (FastViT)")
+            ax[1].axis('off')
+            
+            ax[2].imshow(masked_pil)
+            ax[2].set_title(f"Masked (>{threshold:.2f})")
+            ax[2].axis('off')
+            
+            plt.tight_layout()
+            plt.savefig(kwargs["debug_output_path"])
+            plt.close()
+
+        # 4. Second Pass: Get Focused Embedding
+        focused_features = self._extract_vision_features(masked_pil)
+        
+        # Embedding: Average Pooling
+        if len(focused_features.shape) == 3:
+            embedding = torch.mean(focused_features, dim=1) # [B, D]
+        elif len(focused_features.shape) == 4:
+            embedding = torch.mean(focused_features, dim=(2, 3)) # [B, D]
+            
+        # Normalize
+        embedding = embedding / embedding.norm(p=2, dim=-1, keepdim=True)
+        return embedding.cpu().numpy().flatten()
+
+
+class FastVLMDescriptionStrategy(EmbeddingStrategy):
+    """
+    Prompts FastVLM to describe the scene in a structured format, 
+    then embeds the generated text using SBERT.
+    """
+    IMAGE_TOKEN_INDEX = -200
+
+    def __init__(self, prompt_text=None):
+        super().__init__()
+        self.model = None
+        self.tokenizer = None
+        self.sbert = None
+        self.model_loaded = False
+        self.device = get_device()
+        self.prompt_text = prompt_text or "Analyze this scene. List details for:\n1. Environment (weather, time)\n2. Ego State (motion, location)\n3. Key Objects.\nFormat: 'Category: item, item'. No sentences."
+
+    def load_model(self):
+        if not self.model_loaded:
+            # 1. Load SBERT
+            print(f"Loading SBERT model: {SBERT_MODEL_NAME}...")
+            self.sbert = SentenceTransformer(SBERT_MODEL_NAME)
+            
+            # 2. Load FastVLM
+            model_id = "apple/FastVLM-1.5B"
+            print(f"Loading FastVLM model: {model_id}...")
+            
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+            
+            try:
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_id, 
+                    trust_remote_code=True,
+                    torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                    device_map="auto"
+                )
+                self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+                self.model_loaded = True
+            except Exception as e:
+                print(f"Error loading FastVLM: {e}")
+                raise e
+
+    def generate_embedding(self, image_path: str, **kwargs) -> np.array:
+        self.load_model()
+        
+        # 1. Load Image (Handle Video)
+        if image_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
+             # Extract first frame
+             cap = cv2.VideoCapture(image_path)
+             ret, frame = cap.read()
+             cap.release()
+             if ret:
+                 pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+             else:
+                 raise ValueError(f"Could not read first frame from video: {image_path}")
+        else:
+             pil_image = Image.open(image_path).convert("RGB")
+        
+        # 2. Construct Prompt (Standard HF Usage)
+        messages = [
+            {"role": "user", "content": "<image>\n" + self.prompt_text}
+        ]
+        
+        rendered = self.tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True, tokenize=False
+        )
+        
+        # 3. Tokenize and Splice Image Token
+        pre, post = rendered.split("<image>", 1)
+        
+        # Tokenize text around the image token
+        pre_ids = self.tokenizer(pre, return_tensors="pt", add_special_tokens=False).input_ids
+        post_ids = self.tokenizer(post, return_tensors="pt", add_special_tokens=False).input_ids
+        
+        # Splice in the IMAGE token id 
+        img_tok = torch.tensor([[self.IMAGE_TOKEN_INDEX]], dtype=pre_ids.dtype)
+        
+        input_ids = torch.cat([pre_ids, img_tok, post_ids], dim=1).to(self.model.device)
+        attention_mask = torch.ones_like(input_ids, device=self.model.device)
+        
+        # 4. Preprocess Image
+        # Use the logic proven to work with this model (generating 'pixel_values' specifically)
+        # Note: We rely on the model's image processor to handle resizing.
+        # HF 'images' arg in generate usually expects pixel_values if processed, or raw images if processor is handled internally
+        # But FastVLM code snippet uses 'images=px' where px is pixel_values.
+        px = self.model.get_vision_tower().image_processor(images=pil_image, return_tensors="pt")["pixel_values"]
+        px = px.to(self.model.device, dtype=self.model.dtype)
+        
+        # 5. Generate
+        with torch.no_grad():
+            out = self.model.generate(
+                inputs=input_ids,
+                attention_mask=attention_mask,
+                images=px,
+                max_new_tokens=200,
+            )
+        
+        generated_ids = out[0][input_ids.shape[1]:]
+        description = self.tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+
+        print(f"\n[FastVLM Description]:\n{description}\n")
+
+        # 6. Save Debug Info
+        if "debug_output_path" in kwargs:
+            txt_path = kwargs["debug_output_path"].replace(".jpg", ".txt")
+            with open(txt_path, "w") as f:
+                f.write(description)
+                
+            # Copy image for reference
+            pil_image.save(kwargs["debug_output_path"])
+
+        # 7. Embed with SBERT
+        return self.sbert.encode(description)
+
+class FastVLMHazardStrategy(FastVLMDescriptionStrategy):
+    def __init__(self):
+        super().__init__(prompt_text="List immediate hazards:\n1. Collision Risks\n2. Road Irregularities\n3. Traffic Control\nFormat: 'Risk: item, item'. Keywords only.")

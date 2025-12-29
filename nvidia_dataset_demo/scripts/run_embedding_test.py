@@ -6,11 +6,23 @@ import numpy as np
 import matplotlib.pyplot as plt
 import cv2
 from sklearn.metrics.pairwise import cosine_similarity
-from embeddings.strategies import NaiveStrategy, ForegroundStrictStrategy, ForegroundLooseStrategy, TextDescriptionStrategy, VLMCaptionStrategy, VideoXClipStrategy, ObjectSemanticsStrategy
+from embeddings.strategies import (
+    NaiveStrategy, 
+    ForegroundStrictStrategy, 
+    ForegroundLooseStrategy,
+    TextDescriptionStrategy,
+    VLMCaptionStrategy,
+    VideoXClipStrategy,
+    ObjectSemanticsStrategy,
+    FastViTAttentionStrategy,
+    FastVLMDescriptionStrategy,
+    FastVLMHazardStrategy
+)
 
 # --- Configuration ---
-DATA_DIR = "../extracted_data"
-OUTPUT_DIR = "analysis_results"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "../extracted_data")
+OUTPUT_DIR = os.path.join(BASE_DIR, "analysis_results")
 
 STRATEGIES = {
     "naive": NaiveStrategy,
@@ -19,7 +31,10 @@ STRATEGIES = {
     "text": TextDescriptionStrategy,
     "vlm": VLMCaptionStrategy,
     "video": VideoXClipStrategy,
-    "object_semantics": ObjectSemanticsStrategy
+    "object_semantics": ObjectSemanticsStrategy,
+    "fastvit_attention": FastViTAttentionStrategy,
+    "fastvlm_description": FastVLMDescriptionStrategy,
+    "fastvlm_hazard": FastVLMHazardStrategy
 }
 
 def load_samples(limit=None):
@@ -116,6 +131,119 @@ def main():
     # 4. Compute Similarity Matrix
     print("Computing Cosine Similarity...")
     sim_matrix = cosine_similarity(embeddings)
+
+    # 4.5. Dimensionality Reduction & Export
+    import pandas as pd
+    from sklearn.decomposition import PCA
+    from sklearn.manifold import TSNE
+    try:
+        import umap
+        HAS_UMAP = True
+    except ImportError:
+        HAS_UMAP = False
+        print("UMAP not found, skipping UMAP reduction.")
+
+    n_samples = len(embeddings)
+    
+    # --- 2D Projections (For Viewer) ---
+    print("Computing 2D Projections for Viewer...")
+    projections_2d = {}
+    
+    # PCA-2D
+    if n_samples >= 2:
+        pca_2d = PCA(n_components=2)
+        projections_2d['pca'] = pca_2d.fit_transform(embeddings)
+    else:
+        projections_2d['pca'] = np.zeros((n_samples, 2))
+
+    # t-SNE-2D
+    if n_samples > 1:
+        perp = min(30, n_samples - 1)
+        tsne_2d = TSNE(n_components=2, perplexity=perp, random_state=42, init='random', learning_rate='auto')
+        projections_2d['tsne'] = tsne_2d.fit_transform(embeddings)
+    else:
+        projections_2d['tsne'] = np.zeros((n_samples, 2))
+
+    # UMAP-2D
+    if HAS_UMAP and n_samples > 1:
+        # n_neighbors must be < n_samples
+        n_neigh = min(15, n_samples - 1)
+        if n_neigh < 2: n_neigh = 2
+        umap_2d = umap.UMAP(n_components=2, n_neighbors=n_neigh, random_state=42)
+        projections_2d['umap'] = umap_2d.fit_transform(embeddings)
+    else:
+        projections_2d['umap'] = np.zeros((n_samples, 2))
+
+    # --- High-Dim Projections (For CSV) ---
+    print("Computing High-Dim Projections (5D) for CSV...")
+    projections_hd = {} # High Dim
+    
+    # PCA-5D
+    n_comp_pca = min(5, n_samples)
+    if n_comp_pca > 0:
+        pca_hd = PCA(n_components=n_comp_pca)
+        projections_hd['pca'] = pca_hd.fit_transform(embeddings)
+    else:
+        projections_hd['pca'] = np.zeros((n_samples, 5))
+
+    # t-SNE-3D (Max for Barnes-Hut is 3)
+    # If user really wants 5, we'd need method='exact' which is slow, but let's stick to 3 for stability/speed.
+    n_comp_tsne = min(3, n_samples)
+    if n_samples > 1:
+        perp = min(30, n_samples - 1)
+        tsne_hd = TSNE(n_components=n_comp_tsne, perplexity=perp, random_state=42, init='random', learning_rate='auto')
+        projections_hd['tsne'] = tsne_hd.fit_transform(embeddings)
+    else:
+        projections_hd['tsne'] = np.zeros((n_samples, 3))
+
+    # UMAP-5D
+    if HAS_UMAP and n_samples > 1:
+        n_neigh = min(15, n_samples - 1)
+        if n_neigh < 2: n_neigh = 2
+        umap_hd = umap.UMAP(n_components=5, n_neighbors=n_neigh, random_state=42)
+        projections_hd['umap'] = umap_hd.fit_transform(embeddings)
+    else:
+        projections_hd['umap'] = np.zeros((n_samples, 5))
+
+    # --- Prepare Data Structures ---
+    
+    # 1. JSON Points (for Viewer) - Include all 2D variants
+    points = []
+    for i, id_val in enumerate(ids):
+        pt = {"id": id_val}
+        # Add 2D coords
+        pt["pca"] = projections_2d['pca'][i].tolist()
+        pt["tsne"] = projections_2d['tsne'][i].tolist()
+        pt["umap"] = projections_2d['umap'][i].tolist() if HAS_UMAP else [0, 0]
+        
+        # Default x/y to t-SNE for backward compat? Or make viewer smart.
+        # Let's verify 'tsne' exists
+        pt["x"] = pt["tsne"][0]
+        pt["y"] = pt["tsne"][1]
+        
+        points.append(pt)
+
+    # 2. DataFrame (for CSV) - Include High-Dim variants
+    df_data = {"id": ids}
+    
+    # Add PCA-5D
+    for dim in range(projections_hd['pca'].shape[1]):
+        df_data[f"pca_{dim+1}"] = projections_hd['pca'][:, dim]
+        
+    # Add t-SNE-3D
+    for dim in range(projections_hd['tsne'].shape[1]):
+        df_data[f"tsne_{dim+1}"] = projections_hd['tsne'][:, dim]
+        
+    # Add UMAP-5D
+    if HAS_UMAP:
+        for dim in range(projections_hd['umap'].shape[1]):
+            df_data[f"umap_{dim+1}"] = projections_hd['umap'][:, dim]
+            
+    # Save CSV
+    csv_file = os.path.join(OUTPUT_DIR, f"projections_{args.strategy}.csv")
+    pd.DataFrame(df_data).to_csv(csv_file, index=False)
+    print(f"Projections CSV saved to {csv_file}")
+
     
     # 5. Find Extremes (Most/Least Similar Pairs)
     # Mask diagonal
@@ -140,6 +268,7 @@ def main():
     results = {
         "strategy": args.strategy,
         "total_pairs": len(pairs),
+        "points": points,
         "all_pairs": [{"pair": [ids[p[0][0]], ids[p[0][1]]], "score": float(p[1])} for p in pairs]
     }
     

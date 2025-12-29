@@ -25,7 +25,7 @@ This project explores various **embedding strategies** for analyzing autonomous 
 ```bash
 cd scripts
 
-pip install torch transformers sentence-transformers ultralytics flask opencv-python scikit-learn matplotlib
+pip install torch transformers sentence-transformers ultralytics flask opencv-python scikit-learn matplotlib pandas umap-learn
 ```
 
 Download a subset of the PhysicalAI Autonomous Vehicles dataset
@@ -39,12 +39,16 @@ This should create a folder in `nvidia_dataset_demo/extracted_data`.
 
 ### 1. Generate Embeddings & Run Analysis
 
-Run the analysis script to process data and generate results for a specific strategy:
+Run the analysis script to process data, generate results, and calculate multi-dimensional projections (PCA, t-SNE, UMAP) for visualization:
 
 ```bash
 cd scripts
 python3 run_embedding_test.py --strategy [STRATEGY_NAME] --limit 10
 ```
+
+**Output:**
+*   `analysis_results/results_[strategy].json` (Contains rankings & 2D coordinates for viewer)
+*   `analysis_results/projections_[strategy].csv` (Contains 5D coordinates for external analysis)
 
 **Available Strategies:**
 - `naive`
@@ -54,6 +58,9 @@ python3 run_embedding_test.py --strategy [STRATEGY_NAME] --limit 10
 - `vlm`
 - `video`
 - `object_semantics`
+- `fastvit_attention`
+- `fastvlm_description`
+- `fastvlm_hazard`
 
 ### 2. Launch the Viewer
 
@@ -78,6 +85,9 @@ The browser-based viewer (`viewer_app.py`) provides a rich interface for interac
     *   **Top 5 Most Similar:** Shows pairs with high cosine similarity (visually or semantically close).
     *   **Top 5 Least Similar:** Shows pairs that are distinct.
     *   **Leaderboard:** A sortable table of all pairs.
+    *   **Embedding Space:** Interactive scatter plot of all samples.
+        *   Switch between **t-SNE**, **UMAP**, and **PCA** projections.
+        *   Click comments to see the corresponding video and debug view.
 4.  **Debug Inputs:**
     *   Clicking on a pair opens a **Detail Modal**.
     *   This shows the **Side-by-Side Videos** (autoplay).
@@ -87,6 +97,9 @@ The browser-based viewer (`viewer_app.py`) provides a rich interface for interac
         *   *VLM/Text:* Text Overlay of the generated caption.
         *   *Video:* Filmstrip of sampled frames.
         *   *Object Semantics:* Detailed object inventory list.
+        *   *ViT Attention:* Mask image based on attention weights.
+        *   *VLM Description:* Embedding of VLM-generated scene description.
+        *   *VLM Hazard:* Embedding of VLM-generated hazards/uncertainties description.
 
 ## Directory Structure
 
