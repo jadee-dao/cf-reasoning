@@ -21,7 +21,7 @@ This project explores various **embedding strategies** for analyzing autonomous 
     - Shows "Debug Inputs" (what the model actually saw: masked images, heatmaps, text).
     - Side-by-side video comparison.
   
-![Viewer Screenshot](assets/viewer_screenshot.png)
+![Viewer Screenshot](assets/viewer_screenshot_v2.png)
 
 ## Installation
 
