@@ -16,8 +16,19 @@ from embeddings.strategies import (
     ObjectSemanticsStrategy,
     FastViTAttentionStrategy,
     FastVLMDescriptionStrategy,
-    FastVLMHazardStrategy
+    FastVLMHazardStrategy,
+    OpenRouterDescriptionStrategy,
+    FastVLMHazardStrategy,
+    OpenRouterDescriptionStrategy,
+    OpenRouterHazardStrategy,
+    OpenRouterStoryboardStrategy
 )
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
+# Also try a default load in case it's elsewhere
+load_dotenv()
 
 # --- Configuration ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -34,7 +45,10 @@ STRATEGIES = {
     "object_semantics": ObjectSemanticsStrategy,
     "fastvit_attention": FastViTAttentionStrategy,
     "fastvlm_description": FastVLMDescriptionStrategy,
-    "fastvlm_hazard": FastVLMHazardStrategy
+    "fastvlm_hazard": FastVLMHazardStrategy,
+    "openrouter_description": OpenRouterDescriptionStrategy,
+    "openrouter_hazard": OpenRouterHazardStrategy,
+    "openrouter_storyboard": OpenRouterStoryboardStrategy
 }
 
 def load_samples(limit=None):
@@ -99,6 +113,10 @@ def main():
     StrategyClass = STRATEGIES[args.strategy]
     strategy_instance = StrategyClass()
     
+    # Determine configuration name for outputs
+    config_name = strategy_instance.get_config_name() or args.strategy
+    print(f"Using Output Config Name: {config_name}")
+    
     # 2. Load Data
     print(f"Loading {args.limit} samples...")
     samples = load_samples(args.limit)
@@ -109,7 +127,7 @@ def main():
     ids = []
     
     # Create debug images directory
-    debug_dir = os.path.join(OUTPUT_DIR, "debug_images", args.strategy)
+    debug_dir = os.path.join(OUTPUT_DIR, "debug_images", config_name)
     os.makedirs(debug_dir, exist_ok=True)
     
     print(f"Generating embeddings and saving debug images to {debug_dir}...")
@@ -165,12 +183,16 @@ def main():
         projections_2d['tsne'] = np.zeros((n_samples, 2))
 
     # UMAP-2D
-    if HAS_UMAP and n_samples > 1:
-        # n_neighbors must be < n_samples
-        n_neigh = min(15, n_samples - 1)
-        if n_neigh < 2: n_neigh = 2
-        umap_2d = umap.UMAP(n_components=2, n_neighbors=n_neigh, random_state=42)
-        projections_2d['umap'] = umap_2d.fit_transform(embeddings)
+    if HAS_UMAP and n_samples > 2:
+        try:
+            # n_neighbors must be < n_samples
+            n_neigh = min(15, n_samples - 1)
+            if n_neigh < 2: n_neigh = 2
+            umap_2d = umap.UMAP(n_components=2, n_neighbors=n_neigh, random_state=42)
+            projections_2d['umap'] = umap_2d.fit_transform(embeddings)
+        except Exception as e:
+            print(f"UMAP 2D failed: {e}")
+            projections_2d['umap'] = np.zeros((n_samples, 2))
     else:
         projections_2d['umap'] = np.zeros((n_samples, 2))
 
@@ -197,17 +219,44 @@ def main():
         projections_hd['tsne'] = np.zeros((n_samples, 3))
 
     # UMAP-5D
-    if HAS_UMAP and n_samples > 1:
-        n_neigh = min(15, n_samples - 1)
-        if n_neigh < 2: n_neigh = 2
-        umap_hd = umap.UMAP(n_components=5, n_neighbors=n_neigh, random_state=42)
-        projections_hd['umap'] = umap_hd.fit_transform(embeddings)
+    if HAS_UMAP and n_samples > 2:
+        try:
+            n_neigh = min(15, n_samples - 1)
+            if n_neigh < 2: n_neigh = 2
+            umap_hd = umap.UMAP(n_components=5, n_neighbors=n_neigh, random_state=42)
+            projections_hd['umap'] = umap_hd.fit_transform(embeddings)
+        except Exception as e:
+            print(f"UMAP 5D failed: {e}")
+            projections_hd['umap'] = np.zeros((n_samples, 5))
     else:
         projections_hd['umap'] = np.zeros((n_samples, 5))
 
+    # --- Clustering & Outlier Detection ---
+    print("Computing Clusters and Outliers...")
+    from sklearn.cluster import KMeans
+    from sklearn.ensemble import IsolationForest
+    
+    # 1. Outlier Detection
+    # Contamination='auto' is usually good
+    iso = IsolationForest(contamination='auto', random_state=42)
+    # -1 is outlier, 1 is inlier. We'll store boolean is_outlier
+    outlier_preds = iso.fit_predict(embeddings)
+    
+    # 2. Clusters
+    # We'll pre-compute a few k values for the viewer
+    k_values = [3, 5, 8]
+    cluster_labels = {}
+    
+    for k in k_values:
+        if n_samples >= k:
+            kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+            cluster_labels[f"cluster_k{k}"] = kmeans.fit_predict(embeddings)
+        else:
+            cluster_labels[f"cluster_k{k}"] = np.zeros(n_samples)
+
     # --- Prepare Data Structures ---
     
-    # 1. JSON Points (for Viewer) - Include all 2D variants
+    # 1. JSON Points (for Viewer) - Include all 2D variants + Clusters
     points = []
     for i, id_val in enumerate(ids):
         pt = {"id": id_val}
@@ -216,15 +265,24 @@ def main():
         pt["tsne"] = projections_2d['tsne'][i].tolist()
         pt["umap"] = projections_2d['umap'][i].tolist() if HAS_UMAP else [0, 0]
         
-        # Default x/y to t-SNE for backward compat? Or make viewer smart.
-        # Let's verify 'tsne' exists
+        # Default x/y
         pt["x"] = pt["tsne"][0]
         pt["y"] = pt["tsne"][1]
         
+        # Add Analysis Tags
+        pt["is_outlier"] = bool(outlier_preds[i] == -1)
+        for k in k_values:
+             pt[f"cluster_k{k}"] = int(cluster_labels[f"cluster_k{k}"][i])
+        
         points.append(pt)
 
-    # 2. DataFrame (for CSV) - Include High-Dim variants
+    # 2. DataFrame (for CSV) - Include High-Dim variants + Analysis
     df_data = {"id": ids}
+    
+    # Analysis columns
+    df_data["is_outlier"] = outlier_preds
+    for k in k_values:
+        df_data[f"cluster_k{k}"] = cluster_labels[f"cluster_k{k}"]
     
     # Add PCA-5D
     for dim in range(projections_hd['pca'].shape[1]):
@@ -240,7 +298,7 @@ def main():
             df_data[f"umap_{dim+1}"] = projections_hd['umap'][:, dim]
             
     # Save CSV
-    csv_file = os.path.join(OUTPUT_DIR, f"projections_{args.strategy}.csv")
+    csv_file = os.path.join(OUTPUT_DIR, f"projections_{config_name}.csv")
     pd.DataFrame(df_data).to_csv(csv_file, index=False)
     print(f"Projections CSV saved to {csv_file}")
 
@@ -266,14 +324,14 @@ def main():
     
     # Store all pairs for the viewer to handle slicing and global ranking
     results = {
-        "strategy": args.strategy,
+        "strategy": config_name,
         "total_pairs": len(pairs),
         "points": points,
         "all_pairs": [{"pair": [ids[p[0][0]], ids[p[0][1]]], "score": float(p[1])} for p in pairs]
     }
     
     # Save Results
-    out_file = os.path.join(OUTPUT_DIR, f"results_{args.strategy}.json")
+    out_file = os.path.join(OUTPUT_DIR, f"results_{config_name}.json")
     with open(out_file, "w") as f:
         json.dump(results, f, indent=4)
     print(f"Results saved to {out_file} (Total Pairs: {len(pairs)})")

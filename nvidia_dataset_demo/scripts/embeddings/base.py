@@ -33,3 +33,10 @@ class EmbeddingStrategy(ABC):
             np.array: A 1D numpy array representing the embedding.
         """
         pass
+
+    def get_config_name(self):
+        """
+        Returns a specific configuration name for the output files.
+        If None, the generic strategy name (key) will be used.
+        """
+        return None

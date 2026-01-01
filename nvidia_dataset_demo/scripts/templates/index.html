@@ -351,14 +351,40 @@
             <div id="most" class="section active"></div>
             <div id="least" class="section"></div>
             <div id="scatter" class="section">
-                <div style="margin-bottom:15px; display:flex; justify-content:flex-end; align-items:center; gap:10px;">
-                    <label for="projectionSelect" style="font-weight:bold;">Projection Method:</label>
-                    <select id="projectionSelect" style="width:150px; padding:5px; margin:0;"
-                        onchange="updateScatter()">
-                        <option value="tsne">t-SNE</option>
-                        <option value="umap">UMAP</option>
-                        <option value="pca">PCA</option>
-                    </select>
+                <div style="margin-bottom:15px; display:flex; justify-content:flex-end; align-items:center; gap:20px;">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <label for="colorSelect" style="font-weight:bold;">Color By:</label>
+                        <select id="colorSelect" style="width:150px; padding:5px; margin:0;" onchange="updateScatter()">
+                            <option value="uniform">Uniform (Blue)</option>
+                            <option value="outlier">Outliers (Red)</option>
+                            <option value="cluster_k3">Clusters (K=3)</option>
+                            <option value="cluster_k5">Clusters (K=5)</option>
+                            <option value="cluster_k8">Clusters (K=8)</option>
+                        </select>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <label for="projectionSelect" style="font-weight:bold;">Projection Method:</label>
+                        <select id="projectionSelect" style="width:150px; padding:5px; margin:0;"
+                            onchange="updateScatter()">
+                            <option value="tsne">t-SNE</option>
+                            <option value="umap">UMAP</option>
+                            <option value="pca">PCA</option>
+                        </select>
+                    </div>
+                </div>
+                <!-- Legend -->
+                <div
+                    style="display:flex; justify-content:flex-end; margin-bottom:10px; gap: 15px; font-size: 0.9em; color:#555;">
+                    <div style="display:flex; align-items:center; gap:5px;">
+                        <span
+                            style="width:12px; height:12px; border-radius:50%; background-color:#0066cc; display:inline-block;"></span>
+                        Normal
+                    </div>
+                    <div style="display:flex; align-items:center; gap:5px;">
+                        <span
+                            style="width:12px; height:12px; border-radius:50%; background-color:transparent; border: 3px solid #ff8c00; display:inline-block;"></span>
+                        Acceleration Outlier
+                    </div>
                 </div>
                 <div id="scatterPlot"
                     style="width:100%; height:600px; background:white; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.1);">
@@ -620,6 +646,7 @@
             if (!currentScatterData) return;
 
             const method = document.getElementById('projectionSelect').value;
+            const colorMode = document.getElementById('colorSelect').value;
             const points = currentScatterData;
 
             // Check if method exists (fallback to t-SNE or PCA if missing)
@@ -629,13 +656,43 @@
                 else if (points[0]['pca']) useMethod = 'pca';
             }
 
+            // Determine Colors
+            let colors = [];
+            let opacity = 0.8;
+            let showLegend = false;
+
+            if (colorMode === 'outlier') {
+                colors = points.map(p => p.is_outlier ? '#ff0000' : '#0066cc'); // Red if outlier
+            } else if (colorMode.startsWith('cluster_')) {
+                // Generate categorical colors
+                // Using a simple list of colors or Plotly's default cycle
+                const palette = [
+                    '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+                    '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'
+                ];
+                colors = points.map(p => {
+                    const k = p[colorMode];
+                    return palette[k % palette.length];
+                });
+            } else {
+                colors = '#0066cc';
+            }
+
             const trace = {
                 x: points.map(p => p[useMethod] ? p[useMethod][0] : 0),
                 y: points.map(p => p[useMethod] ? p[useMethod][1] : 0),
                 mode: 'markers',
                 type: 'scatter',
                 text: points.map(p => p.id),
-                marker: { size: 12, color: '#0066cc', opacity: 0.8 },
+                marker: {
+                    size: 12,
+                    color: colors,
+                    opacity: opacity,
+                    line: {
+                        color: points.map(p => p.is_accel_outlier ? '#ff8c00' : 'rgba(0,0,0,0)'), // Dark Orange if outlier
+                        width: points.map(p => p.is_accel_outlier ? 3 : 0)
+                    }
+                },
                 hoverinfo: 'text'
             };
 

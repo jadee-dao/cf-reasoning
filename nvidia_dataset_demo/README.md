@@ -15,6 +15,10 @@ This project explores various **embedding strategies** for analyzing autonomous 
     8.  **ViT Attention:** Use ViT attention weights to mask image (e.g. threshold at 0.35) for a vision embedding. This currently implements FASTViT, but can be extended to any ViT model.
     9.  **VLM Description:** Uses a lightweight VLM to generate a description of the scene in a given image.
     10. **VLM Hazard:** Uses a lightweight VLM to generate a focused description on the hazards and uncertainties of the scene in a given image.
+    11. **OpenRouter Description:** Uses external VLMs (via OpenRouter) to describe the scene (ex. `nvidia/nemotron-nano-12b-v2-vl:free`).
+    12. **OpenRouter Hazard:** Uses external VLMs (via OpenRouter) to focus on hazards and safety-critical events (ex. `nvidia/nemotron-nano-12b-v2-vl:free`).
+    13. **OpenRouter Storyboard:** Samples 4 frames from the video, creates a 2x2 grid, and analyzes the sequence for temporal understanding using an external VLM (ex. `nvidia/nemotron-nano-12b-v2-vl:free`).
+
 
 - **Browser-Based Viewer:**
     - Visualizes similarity search results.
@@ -38,7 +42,23 @@ unzip -q nvidia_dataset_demo/camera/camera_front_wide_120fov/camera_front_wide_1
 ```
 This should create a folder in `nvidia_dataset_demo/extracted_data`.
 
+## Configuration
+
+To use the **OpenRouter** strategies (and access external VLMs like GPT-4o, Claude 3.5, or NVIDIA Nemotron), you must set up your API key.
+
+1.  Create a `.env` file in the project root:
+    ```bash
+    touch .env
+    ```
+2.  Add your OpenRouter API key and Model Name:
+    ```bash
+    OPENROUTER_API_KEY=sk-or-v1-...
+    OPENROUTER_MODEL=nvidia/nemotron-nano-12b-v2-vl:free # default
+    ```
+    > **Note:** These strategies communicate with the [OpenRouter API](https://openrouter.ai). You can use any model available on OpenRouter by changing the `OPENROUTER_MODEL` variable (e.g. `openai/gpt-4o`, `anthropic/claude-3.5-sonnet:beta`, etc.).
+
 ## Usage
+
 
 ### 1. Generate Embeddings & Run Analysis
 
@@ -64,6 +84,10 @@ python3 run_embedding_test.py --strategy [STRATEGY_NAME] --limit 10
 - `fastvit_attention`
 - `fastvlm_description`
 - `fastvlm_hazard`
+- `openrouter_description`
+- `openrouter_hazard`
+- `openrouter_storyboard`
+
 
 ### 2. Launch the Viewer
 
@@ -102,7 +126,11 @@ The browser-based viewer (`viewer_app.py`) provides a rich interface for interac
         *   *Object Semantics:* Detailed object inventory list.
         *   *ViT Attention:* Mask image based on attention weights.
         *   *VLM Description:* Embedding of VLM-generated scene description.
+
         *   *VLM Hazard:* Embedding of VLM-generated hazards/uncertainties description.
+        *   *OpenRouter Strategies:* Text description returned by the API.
+        *   *Storyboard:* 2x2 grid image of sampled frames used for temporal analysis.
+
 
 ## Directory Structure
 

@@ -6,6 +6,7 @@ from ultralytics import YOLO
 import numpy as np
 import cv2
 from .base import EmbeddingStrategy
+from .prompts import SCENE_DESCRIPTION_PROMPT, HAZARD_IDENTIFICATION_PROMPT
 
 # --- Constants ---
 SIGLIP_MODEL_NAME = "google/siglip-so400m-patch14-384"
@@ -598,7 +599,11 @@ class FastVLMDescriptionStrategy(EmbeddingStrategy):
         self.sbert = None
         self.model_loaded = False
         self.device = get_device()
-        self.prompt_text = prompt_text or "Analyze this scene. List details for:\n1. Environment (weather, time)\n2. Ego State (motion, location)\n3. Key Objects.\nFormat: 'Category: item, item'. No sentences."
+        self.device = get_device()
+        self.prompt_text = prompt_text or SCENE_DESCRIPTION_PROMPT
+
+    def get_config_name(self):
+        return "fastvlm_1.5b_description"
 
     def load_model(self):
         if not self.model_loaded:
@@ -699,4 +704,265 @@ class FastVLMDescriptionStrategy(EmbeddingStrategy):
 
 class FastVLMHazardStrategy(FastVLMDescriptionStrategy):
     def __init__(self):
-        super().__init__(prompt_text="List immediate hazards:\n1. Collision Risks\n2. Road Irregularities\n3. Traffic Control\nFormat: 'Risk: item, item'. Keywords only.")
+        super().__init__(prompt_text=HAZARD_IDENTIFICATION_PROMPT)
+
+    def get_config_name(self):
+        return "fastvlm_1.5b_hazard"
+
+# --- OpenRouter Strategies ---
+
+import requests
+import base64
+import os
+
+class OpenRouterDescriptionStrategy(EmbeddingStrategy):
+    """
+    Uses OpenRouter API to describe the scene, then embeds the description using SBERT.
+    """
+    def __init__(self, prompt_text=None, model=None):
+        super().__init__()
+        self.sbert = None
+        self.model_loaded = False
+        self.prompt_text = prompt_text or SCENE_DESCRIPTION_PROMPT
+        # Default to the requested model
+        self.model_name = model or os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-nano-12b-v2-vl:free")
+        self.api_key = os.getenv("OPENROUTER_API_KEY")
+
+    def get_config_name(self):
+        # Sanitize model name for filename (replace / and : with _)
+        sanitized = self.model_name.replace("/", "_").replace(":", "_")
+        return f"{sanitized}_description"
+
+    def load_model(self):
+        if not self.model_loaded:
+            if not self.api_key:
+                raise ValueError("OPENROUTER_API_KEY environment variable not set.")
+                
+            print(f"Loading SBERT model: {SBERT_MODEL_NAME}...")
+            self.sbert = SentenceTransformer(SBERT_MODEL_NAME)
+            self.model_loaded = True
+
+    def _encode_image(self, image_path):
+        with open(image_path, "rb") as image_file:
+            return base64.b64encode(image_file.read()).decode('utf-8')
+
+    def generate_embedding(self, image_path: str, **kwargs) -> np.array:
+        self.load_model()
+        
+        # 1. Prepare Image (Base64)
+        # If it's a video, we might need to extract a frame first if not already done by caller.
+        # run_embedding_test.py extracts a temp frame, so image_path is likely a .jpg
+        if image_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
+             cap = cv2.VideoCapture(image_path)
+             ret, frame = cap.read()
+             cap.release()
+             if ret:
+                 # Encode from memory
+                 _, buffer = cv2.imencode('.jpg', frame)
+                 base64_image = base64.b64encode(buffer).decode('utf-8')
+             else:
+                 raise ValueError("Could not read frame from video")
+        else:
+            base64_image = self._encode_image(image_path)
+
+        # 2. Call OpenRouter API
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/vlabench", # Optional
+            "X-Title": "VLABench Dataset Demo" # Optional
+        }
+
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": self.prompt_text
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+
+        max_retries = 3
+        description = ""
+        
+        for attempt in range(max_retries):
+            try:
+                response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=60)
+                response.raise_for_status()
+                data = response.json()
+                description = data['choices'][0]['message']['content'].strip()
+                break
+            except Exception as e:
+                print(f"OpenRouter API Error (Attempt {attempt+1}/{max_retries}): {e}")
+                if attempt == max_retries - 1:
+                    print("Falling back to empty description.")
+                    description = "analysis failed"
+
+        print(f"\n[OpenRouter {self.model_name}]:\n{description}\n")
+
+        # 3. Save Debug Info
+        if "debug_output_path" in kwargs:
+            txt_path = kwargs["debug_output_path"].replace(".jpg", ".txt")
+            with open(txt_path, "w") as f:
+                f.write(description)
+            
+            # Save copy of image
+            if image_path.lower().endswith(('.jpg', '.png', '.jpeg')):
+                import shutil
+                shutil.copy(image_path, kwargs["debug_output_path"])
+            else:
+                # If it was video/memory, we save what we have
+                pass 
+
+        # 4. Embed with SBERT
+        return self.sbert.encode(description)
+
+class OpenRouterHazardStrategy(OpenRouterDescriptionStrategy):
+    def __init__(self):
+        super().__init__(prompt_text=HAZARD_IDENTIFICATION_PROMPT)
+
+    def get_config_name(self):
+        sanitized = self.model_name.replace("/", "_").replace(":", "_")
+        return f"{sanitized}_hazard"
+
+class OpenRouterStoryboardStrategy(OpenRouterDescriptionStrategy):
+    """
+    Samples 4 frames from the video, updates them to a 2x2 grid, 
+    and prompts the VLM to analyze the sequence for difficulty and hazards.
+    """
+    def __init__(self):
+        # We'll use the specific STORYBOARD prompt
+        from .prompts import STORYBOARD_PROMPT
+        super().__init__(prompt_text=STORYBOARD_PROMPT)
+
+    def get_config_name(self):
+        sanitized = self.model_name.replace("/", "_").replace(":", "_")
+        return f"{sanitized}_storyboard"
+
+    def generate_embedding(self, image_path: str, **kwargs) -> np.array:
+        self.load_model()
+        
+        # 1. Get Video Path
+        # Ideally, run_embedding_test.py passes 'video_path'. 
+        # If not, we might fail or scrape from image_path.
+        video_path = kwargs.get("video_path")
+        if not video_path:
+            # Fallback (dangerous if file structure changes)
+            # image_path is typically .../temp_frame_ID.jpg
+            # video is often at data_dir/ID.mp4 or extracted_data/.../ID.mp4?
+            # Let's assume run_embedding_test ALWAYS passes video_path now.
+            raise ValueError("Video path required for Storyboard Strategy")
+
+        # 2. Sample 4 Frames
+        cap = cv2.VideoCapture(video_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames < 4:
+            # Not enough frames, just duplicate?
+            indices = np.linspace(0, total_frames-1, total_frames).astype(int)
+            # Pad to 4
+            while len(indices) < 4:
+                indices = np.append(indices, indices[-1])
+        else:
+            # 10%, 35%, 60%, 85%
+            indices = [
+                int(total_frames * 0.10),
+                int(total_frames * 0.35),
+                int(total_frames * 0.60),
+                int(total_frames * 0.85)
+            ]
+            
+        frames = []
+        for idx in indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if ret:
+                # Resize for grid (e.g., 384x384 each -> 768x768 total)
+                # Keep it reasonable for API costs/limits
+                frame = cv2.resize(frame, (384, 384))
+                frames.append(frame)
+            else:
+                # Black frame fallback
+                frames.append(np.zeros((384, 384, 3), dtype=np.uint8))
+        cap.release()
+        
+        # 3. Stitch 2x2 Grid
+        # Top Row: Frame 0, Frame 1
+        top_row = np.hstack((frames[0], frames[1]))
+        # Bottom Row: Frame 2, Frame 3
+        bot_row = np.hstack((frames[2], frames[3]))
+        # Full Grid
+        grid_img = np.vstack((top_row, bot_row))
+        
+        # 4. Encode Grid Image
+        _, buffer = cv2.imencode('.jpg', grid_img)
+        base64_image = base64.b64encode(buffer).decode('utf-8')
+        
+        # 5. Call API
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/vlabench",
+            "X-Title": "VLABench Storyboard"
+        }
+
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": self.prompt_text
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        # Retry logic similar to parent
+        max_retries = 3
+        description = ""
+        for attempt in range(max_retries):
+            try:
+                response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=60)
+                response.raise_for_status()
+                data = response.json()
+                description = data['choices'][0]['message']['content'].strip()
+                break
+            except Exception as e:
+                print(f"OpenRouter Storyboard Error (Attempt {attempt+1}): {e}")
+                if attempt == max_retries - 1:
+                    description = "storyboard analysis failed"
+
+        print(f"\n[OpenRouter {self.model_name} Storyboard]:\n{description}\n")
+
+        # 6. Save Debug Info
+        if "debug_output_path" in kwargs:
+            txt_path = kwargs["debug_output_path"].replace(".jpg", ".txt")
+            with open(txt_path, "w") as f:
+                f.write(description)
+            
+            # Save the stitched grid!
+            cv2.imwrite(kwargs["debug_output_path"], grid_img)
+
+        # 7. Embed
+        return self.sbert.encode(description)
