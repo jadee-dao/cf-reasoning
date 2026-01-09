@@ -112,7 +112,7 @@ def get_debug_text(strategy, id):
     return "No text description available.", 404
 
 if __name__ == '__main__':
-    print(f"Starting viewer on http://localhost:8080")
+    print(f"Starting viewer on http://localhost:8081")
     print(f"Data Dir: {DATA_DIR}")
     print(f"Results Dir: {RESULTS_DIR}")
-    app.run(debug=True, port=8080, host='0.0.0.0')
+    app.run(debug=True, port=8081, host='0.0.0.0')

@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Similarity Analysis Viewer</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            margin: 0;
+            background: #222;
+            color: #eee;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .controls {
+            background: #333;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        select {
+            padding: 8px;
+            font-size: 16px;
+            border-radius: 4px;
+            border: none;
+            min-width: 300px;
+        }
+
+        .layout {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .video-box {
+            flex: 0 0 45%;
+            min-width: 400px;
+        }
+
+        .plot-box {
+            flex: 1;
+            min-width: 400px;
+            background: #333;
+            border-radius: 8px;
+            padding: 10px;
+        }
+
+        video {
+            width: 100%;
+            border-radius: 4px;
+            background: black;
+        }
+
+        h1 {
+            margin-top: 0;
+        }
+
+        .loading {
+            color: #aaa;
+            font-style: italic;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Similarity Analysis</h1>
+
+        <div class="controls">
+            <label for="sampleSelect">Select Sample:</label>
+            <select id="sampleSelect">
+                <option value="">Loading...</option>
+            </select>
+            <span id="status" class="loading"></span>
+            <span id="typeBadge"
+                style="margin-left:auto; padding:5px 10px; border-radius:4px; font-weight:bold; display:none;"></span>
+        </div>
+
+        <div id="dashboard" class="layout" style="display:none;">
+            <div class="video-box">
+                <video id="mainVideo" controls loop playsinline>
+                    Your browser does not support the video tag.
+                </video>
+                <div style="margin-top: 10px; font-size: 0.9em; color: #aaa;">
+                    Video Logic: Sampled at 5 FPS (0.2s interval)
+                </div>
+            </div>
+            <div class="plot-box">
+                <div id="similarityPlot" style="width:100%; height: 500px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const sampleSelect = document.getElementById('sampleSelect');
+        const dashboard = document.getElementById('dashboard');
+        const video = document.getElementById('mainVideo');
+        const statusSpan = document.getElementById('status');
+
+        // Load list
+        fetch('/api/list')
+            .then(r => r.json())
+            .then(data => {
+                sampleSelect.innerHTML = '<option value="">-- Choose Sample --</option>';
+                data.forEach(item => {
+                    const opt = document.createElement('option');
+
+                    if (typeof item === 'string') {
+                        opt.value = item;
+                        opt.textContent = item;
+                    } else {
+                        opt.value = item.id;
+                        const label = item.is_outlier ? `[OUTLIER] ${item.id}` : `[NORMAL] ${item.id}`;
+                        opt.textContent = label;
+                        // Add subtle color hints
+                        if (item.is_outlier) opt.style.color = '#ffcccc';
+                        else opt.style.color = '#ccffcc';
+                        if (item.legacy) opt.textContent += " (Legacy)";
+                    }
+                    sampleSelect.appendChild(opt);
+                });
+
+                // Auto select first if available
+                if (data.length > 0) {
+                    const firstId = (typeof data[0] === 'string') ? data[0] : data[0].id;
+                    sampleSelect.value = firstId;
+                    loadSample(firstId);
+                }
+            });
+
+        sampleSelect.addEventListener('change', (e) => {
+            const id = e.target.value;
+            if (id) loadSample(id);
+            else dashboard.style.display = 'none';
+        });
+
+        function loadSample(id) {
+            statusSpan.textContent = "Loading data...";
+            dashboard.style.display = 'flex';
+
+            // Set Video
+            video.src = `/video/${id}`;
+            video.load();
+
+            // Load Data
+            fetch(`/api/data/${id}`)
+                .then(r => r.json())
+                .then(data => {
+                    statusSpan.textContent = "";
+
+                    const typeBadge = document.getElementById('typeBadge');
+                    if (data.is_outlier !== undefined) {
+                        typeBadge.style.display = 'inline-block';
+                        if (data.is_outlier) {
+                            typeBadge.textContent = "OUTLIER";
+                            typeBadge.style.background = "#990000";
+                            typeBadge.style.color = "white";
+                        } else {
+                            typeBadge.textContent = "NORMAL";
+                            typeBadge.style.background = "#006600";
+                            typeBadge.style.color = "white";
+                        }
+                    } else {
+                        // Infer outlier if legacy
+                        if (data.legacy) {
+                            typeBadge.style.display = 'inline-block';
+                            typeBadge.textContent = "OUTLIER (Legacy)";
+                            typeBadge.style.background = "#666";
+                            typeBadge.style.color = "#ccc";
+                        } else {
+                            typeBadge.style.display = 'none';
+                        }
+                    }
+
+                    if (data.legacy) {
+                        renderLegacy(id);
+                    } else {
+                        renderPlot(data);
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
+                    statusSpan.textContent = "Error loading data.";
+                });
+        }
+
+        function renderLegacy(id) {
+            const container = document.getElementById('similarityPlot');
+            container.innerHTML = `<img src="/plot_image/${id}" style="width:100%; height:auto; border-radius:4px;">`;
+            // Remove plotly lock if any? mostly just overwriting innerHTML is fine.
+        }
+
+        function renderPlot(data) {
+            const container = document.getElementById('similarityPlot');
+            container.innerHTML = ""; // clear any legacy image
+            const timestamps = data.timestamps;
+            const traces = [];
+
+            for (const [strategy, values] of Object.entries(data.strategies)) {
+                traces.push({
+                    x: timestamps,
+                    y: values,
+                    mode: 'lines',
+                    name: strategy,
+                    line: { width: 2 }
+                });
+            }
+
+            const layout = {
+                title: 'Cosine Similarity',
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                font: { color: '#eee' },
+                xaxis: {
+                    title: 'Time (s)',
+                    gridcolor: '#444'
+                },
+                yaxis: {
+                    title: 'Similarity',
+                    range: [0, 1.05],
+                    gridcolor: '#444'
+                },
+                hovermode: 'closest',
+                margin: { t: 40, r: 20, b: 40, l: 50 }
+            };
+
+            Plotly.newPlot('similarityPlot', traces, layout, { responsive: true });
+
+            // Click interaction
+            document.getElementById('similarityPlot').on('plotly_click', function (data) {
+                if (data.points.length > 0) {
+                    const x = data.points[0].x;
+                    video.currentTime = x;
+                    video.play();
+                }
+            });
+        }
+    </script>
+</body>
+
+</html>
