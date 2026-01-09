@@ -131,6 +131,31 @@ The browser-based viewer (`viewer_app.py`) provides a rich interface for interac
         *   *OpenRouter Strategies:* Text description returned by the API.
         *   *Storyboard:* 2x2 grid image of sampled frames used for temporal analysis.
 
+### 3. Similarity vs. Acceleration Outlier Analysis
+
+This module correlates dips in frame-to-frame embedding similarity with "Acceleration Outlier" events (sudden stops/starts).
+
+**Run Analysis:**
+```bash
+python3 scripts/analyze_embedding_similarity.py [--regenerate]
+```
+-   **Features**:
+    -   Compare 6+ strategies simultaneously (Native, Foreground, YOLO-Text, BLIP, Hazard, ViT-Attn).
+    -   Process both **Outlier** and **Normal** samples for comparison.
+    -   Incremental processing (skips existing results unless `--regenerate` is used).
+
+**Launch Similarity Viewer:**
+```bash
+python3 scripts/similarity_viewer_app.py
+```
+-   **URL**: http://localhost:8080 or http://localhost:5000
+-   **Interface**:
+    -   Select samples from dropdown (labeled `[OUTLIER]` or `[NORMAL]`).
+    -   Interactive Plotly graph of similarity scores over time.
+    -   Video player synchronized with plot (click plot to seek).
+    -   **Annotated Video**: Overlays similarity scores and status (Stable/Change/Dip) for all strategies on the video frames.
+
+![Similarity Viewer Screenshot](assets/similarity_viewer_screenshot.png)
 
 ## Directory Structure
 
