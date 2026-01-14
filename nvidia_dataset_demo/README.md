@@ -32,7 +32,7 @@ This project explores various **embedding strategies** for analyzing autonomous 
 ```bash
 cd scripts
 
-pip install torch transformers sentence-transformers ultralytics flask opencv-python scikit-learn matplotlib pandas umap-learn
+pip install torch transformers sentence-transformers ultralytics flask opencv-python scikit-learn matplotlib pandas umap-learn dotenv
 ```
 
 Download a subset of the PhysicalAI Autonomous Vehicles dataset

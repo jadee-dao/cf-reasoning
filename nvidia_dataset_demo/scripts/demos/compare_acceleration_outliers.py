@@ -11,7 +11,7 @@ from typing import List, Dict
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "../extracted_data")
 RESULTS_DIR = os.path.join(BASE_DIR, "analysis_results")
-GT_FILE = os.path.join(DATA_DIR, "accel_outliers_sample_ids.txt")
+GT_FILE = os.path.join(DATA_DIR, "calibration_set", "accel_outliers_sample_ids.txt")
 
 def load_gt_ids(filepath: str) -> set:
     """Loads ground truth outlier IDs from a text file."""

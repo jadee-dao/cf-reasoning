@@ -51,18 +51,15 @@ STRATEGIES = {
     "openrouter_storyboard": OpenRouterStoryboardStrategy
 }
 
-def load_samples(limit=None):
-    """Finds all video folders and identifies the middle frame."""
+def load_samples(limit=None, interval_sec=1.5):
+    """Finds all video folders and identifies frames at fixed intervals."""
+    import subprocess
     samples = []
-    # Matching the folder structure: extracted_data/camera_front_wide_120fov/UUID.camera_front...
-    # We look for the folder, then the video inside is usually standard.
-    # Actually, based on previous scripts, the folders ARE the samples.
-    # Inside each folder, there are frames if extracted, or we extract the middle frame.
     
-    # Let's check how inspect_data.py yielded samples. 
-    # It seems we have .mp4 files directly in the root of extracted_data? 
-    # Or folders? 
-    # Let's rely on finding .mp4 files.
+    # Create persistent base dir for this interval
+    interval_dir_name = f"{interval_sec}s"
+    persistent_base_dir = os.path.join(DATA_DIR, "interval_samples", interval_dir_name)
+    os.makedirs(persistent_base_dir, exist_ok=True)
     
     mp4_files = glob.glob(os.path.join(DATA_DIR, "**/*.mp4"), recursive=True)
     mp4_files.sort()
@@ -71,38 +68,93 @@ def load_samples(limit=None):
         mp4_files = mp4_files[:limit]
         
     for video_path in mp4_files:
-        # We need to extract the middle frame to a temp location for the strategy to read
+        filename = os.path.basename(video_path)
+        # Extract UUID (everything before the first dot)
+        uuid = filename.split('.')[0]
+        
+        # Create persistent dir for this video
+        sample_dir = os.path.join(persistent_base_dir, uuid)
+        os.makedirs(sample_dir, exist_ok=True)
+        
+        # Get video duration using cv2 (simple way)
         cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print(f"Warning: Could not open {video_path}")
+            continue
+            
+        fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        mid_frame_idx = total_frames // 2
-        cap.set(cv2.CAP_PROP_POS_FRAMES, mid_frame_idx)
-        ret, frame = cap.read()
+        duration_sec = total_frames / fps if fps > 0 else 0
         cap.release()
         
-        if ret:
-            # Save frame temporarily
-            filename = os.path.basename(video_path)
-            sample_id = filename.split('.')[0] # Basic ID
-            temp_img_path = f"temp_frame_{sample_id}.jpg"
-            cv2.imwrite(temp_img_path, frame)
+        if duration_sec <= 0:
+            print(f"Warning: Invalid duration for {video_path}")
+            continue
+
+        # Iterate by time intervals
+        current_time = 0.0
+        while current_time < duration_sec:
+            ts_us = int(current_time * 1_000_000)
+            sample_id = f"{uuid}_{ts_us}"
             
+            sub_video_path = os.path.join(sample_dir, f"{ts_us}.mp4")
+            img_path = os.path.join(sample_dir, f"{ts_us}.jpg")
+            
+            # Check if files exist
+            if not os.path.exists(sub_video_path) or not os.path.exists(img_path):
+                # FFmpeg command to extract sub-video and frame
+                # -ss before -i is faster processing
+                try:
+                    # Extract sub-video (-t duration, -c copy might fail if keyframes don't align, so re-encode is safer but slower. 
+                    # For accuracy we re-encode or use fast splitting. Let's try re-encoding for exact cut.)
+                    # Actually -c copy is bad for arbitrary cuts.
+                    cmd_video = [
+                        "ffmpeg", "-y", "-v", "error",
+                        "-ss", str(current_time),
+                        "-t", str(interval_sec),
+                        "-i", video_path,
+                        "-c:v", "libx264", "-c:a", "aac", # Re-encode to ensure playable subclip
+                        sub_video_path
+                    ]
+                    subprocess.run(cmd_video, check=True)
+                    
+                    # Extract frame
+                    cmd_frame = [
+                        "ffmpeg", "-y", "-v", "error",
+                        "-ss", str(current_time),
+                        "-i", video_path,
+                        "-frames:v", "1",
+                        "-q:v", "2", # High quality jpg
+                        img_path
+                    ]
+                    subprocess.run(cmd_frame, check=True)
+                    
+                except subprocess.CalledProcessError as e:
+                    print(f"Error processing {sample_id}: {e}")
+                    current_time += interval_sec
+                    continue
+
             samples.append({
                 "id": sample_id,
-                "video_path": video_path,
-                "image_path": temp_img_path
+                "video_path": sub_video_path, # POINT TO SUB-VIDEO
+                "image_path": img_path,
+                "timestamp_us": ts_us,
+                "uuid": uuid
             })
+            
+            current_time += interval_sec
             
     return samples
 
 def clean_temp_files(samples):
-    for s in samples:
-        if os.path.exists(s["image_path"]):
-            os.remove(s["image_path"])
+    # Frames are now persistent in extracted_data/interval_samples, so we do NOT delete them.
+    pass
 
 def main():
     parser = argparse.ArgumentParser(description="Run Embedding Analysis")
     parser.add_argument("--strategy", type=str, required=True, choices=STRATEGIES.keys(), help="Embedding strategy to use")
     parser.add_argument("--limit", type=int, default=10, help="Number of samples to process (default 10)")
+    parser.add_argument("--interval", type=float, default=1.5, help="Time interval in seconds for sampling (default 1.5)")
     args = parser.parse_args()
     
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -118,8 +170,8 @@ def main():
     print(f"Using Output Config Name: {config_name}")
     
     # 2. Load Data
-    print(f"Loading {args.limit} samples...")
-    samples = load_samples(args.limit)
+    print(f"Loading {args.limit} samples (Interval: {args.interval}s)...")
+    samples = load_samples(limit=args.limit, interval_sec=args.interval)
     print(f"Loaded {len(samples)} samples.")
     
     # 3. Generate Embeddings

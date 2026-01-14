@@ -29,7 +29,7 @@ for strategy in "${strategies[@]}"; do
     # Allow it to fail without stopping the whole loop? 
     # The user might prefer 'set -e' to stop on error, or continue. 
     # I'll use '|| true' to let it continue if one fails (e.g. missing API key).
-    python scripts/run_embedding_test.py --strategy "$strategy" --limit 100 || echo "Strategy $strategy failed!"
+    python scripts/run_embedding_test.py --strategy "$strategy" --limit 100 --interval 1.5 || echo "Strategy $strategy failed!"
     
     echo ""
 done

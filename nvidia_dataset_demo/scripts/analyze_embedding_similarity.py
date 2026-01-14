@@ -200,7 +200,7 @@ def analyze_sample(sample_id, strategies, interval_seconds=0.5, regenerate=False
     
     plot_timestamps = []
     
-    temp_img_path = os.path.join(OUTPUT_DIR, "temp_frame.jpg")
+    temp_img_path = os.path.join(DATA_DIR, "temp_frame.jpg")
 
     for i, info in enumerate(tqdm(target_frames_info, desc=f"Processing {sample_id}", leave=False)):
         frame_idx = info['frame_index']
