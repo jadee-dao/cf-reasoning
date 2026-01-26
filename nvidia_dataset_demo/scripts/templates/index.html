@@ -339,6 +339,16 @@
                 </div>
             </div>
 
+            <!-- Header Controls -->
+            <div
+                style="margin-bottom: 20px; padding: 15px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);">
+                <label style="font-weight:bold; cursor:pointer; font-size: 16px;">
+                    <input type="checkbox" id="filterSameId" onchange="reloadData()"> Show Different Scenes Only
+                    <span style="font-weight:normal; color:#666; margin-left:5px;">(Hides pairs from the same UUID
+                        sequence)</span>
+                </label>
+            </div>
+
             <!-- Tabs -->
             <div class="tabs">
                 <button class="tab-btn active" onclick="switchTab('most')">Top 5 Most Similar</button>
@@ -351,25 +361,38 @@
             <div id="most" class="section active"></div>
             <div id="least" class="section"></div>
             <div id="scatter" class="section">
-                <div style="margin-bottom:15px; display:flex; justify-content:flex-end; align-items:center; gap:20px;">
-                    <div style="display:flex; align-items:center; gap:10px;">
-                        <label for="colorSelect" style="font-weight:bold;">Color By:</label>
-                        <select id="colorSelect" style="width:150px; padding:5px; margin:0;" onchange="updateScatter()">
-                            <option value="uniform">Uniform (Blue)</option>
-                            <option value="outlier">Outliers (Red)</option>
-                            <option value="cluster_k3">Clusters (K=3)</option>
-                            <option value="cluster_k5">Clusters (K=5)</option>
-                            <option value="cluster_k8">Clusters (K=8)</option>
-                        </select>
+                <div style="margin-bottom:15px; display:flex; justify-content:space-between; align-items:center;">
+                    <div style="font-size:0.9em; color:#666; max-width:60%;">
+                        <strong>About the Plot:</strong>
+                        Displaying <span id="pointCount" style="font-weight:bold;">-</span> points.
+                        <br>
+                        <strong>Outliers:</strong> Detected via Isolation Forest (contamination='auto') on embedding
+                        coordinates.
+                        <br>
+                        <strong>Accel Outliers:</strong> Highlighted based on top 3 worst ADE frames from
+                        <code>worst-ade-log-10-90pctl.json</code>.
                     </div>
-                    <div style="display:flex; align-items:center; gap:10px;">
-                        <label for="projectionSelect" style="font-weight:bold;">Projection Method:</label>
-                        <select id="projectionSelect" style="width:150px; padding:5px; margin:0;"
-                            onchange="updateScatter()">
-                            <option value="tsne">t-SNE</option>
-                            <option value="umap">UMAP</option>
-                            <option value="pca">PCA</option>
-                        </select>
+                    <div style="display:flex; align-items:center; gap:20px;">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <label for="colorSelect" style="font-weight:bold;">Color By:</label>
+                            <select id="colorSelect" style="width:150px; padding:5px; margin:0;"
+                                onchange="updateScatter()">
+                                <option value="uniform">Uniform (Blue)</option>
+                                <option value="outlier">Outliers (Red)</option>
+                                <option value="cluster_k3">Clusters (K=3)</option>
+                                <option value="cluster_k5">Clusters (K=5)</option>
+                                <option value="cluster_k8">Clusters (K=8)</option>
+                            </select>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <label for="projectionSelect" style="font-weight:bold;">Projection Method:</label>
+                            <select id="projectionSelect" style="width:150px; padding:5px; margin:0;"
+                                onchange="updateScatter()">
+                                <option value="tsne">t-SNE</option>
+                                <option value="umap">UMAP</option>
+                                <option value="pca">PCA</option>
+                            </select>
+                        </div>
                     </div>
                 </div>
                 <!-- Legend -->
@@ -392,6 +415,7 @@
                 <div id="scatterDetail" style="margin-top:20px;"></div>
             </div>
             <div id="leaderboard" class="section">
+
                 <table>
                     <thead>
                         <tr>
@@ -420,6 +444,7 @@
         const loadingDiv = document.getElementById('loading');
         const modal = document.getElementById('detailModal');
         const modalBody = document.getElementById('modalBody');
+        const filterSameId = document.getElementById('filterSameId');
 
         let currentScatterData = null;
         let currentStrategy = null;
@@ -439,23 +464,33 @@
 
         // Handle selection
         fileSelect.addEventListener('change', (e) => {
-            const filename = e.target.value;
+            reloadData();
+        });
+
+        function reloadData() {
+            const filename = fileSelect.value;
             if (!filename) {
                 dashboard.style.display = 'none';
                 return;
             }
 
-            loadingDiv.style.display = 'block';
-            dashboard.style.display = 'none';
+            const useFilter = filterSameId.checked;
 
-            fetch(`/api/results/${filename}`)
+            loadingDiv.style.display = 'block';
+
+            // Only hide dashboard if we are loading a NEW file, maybe keep it visible for filter?
+            // User experience: better to show loading state.
+            dashboard.style.opacity = '0.5';
+
+            fetch(`/api/results/${filename}?filter_same_id=${useFilter}`)
                 .then(response => response.json())
                 .then(data => {
                     loadingDiv.style.display = 'none';
                     dashboard.style.display = 'block';
+                    dashboard.style.opacity = '1';
                     renderDashboard(data);
                 });
-        });
+        }
 
         function switchTab(tabId) {
             // Update buttons
@@ -499,14 +534,14 @@
             document.getElementById('strategyName').textContent = data.strategy.toUpperCase();
 
             // Data is sorted Descending (Best -> Worst)
-            const allPairs = data.all_pairs;
-            const totalPairs = data.total_pairs;
+            const allPairs = data.all_pairs; // This is now truncated to Top 100
+            const totalPairs = data.total_pairs; // This is the True Total from backend
 
             document.getElementById('totalCount').textContent = totalPairs;
 
-            // Max is the first item (Score 1.0 or high), Min is the last item
-            const maxVal = allPairs.length > 0 ? allPairs[0].score : 0;
-            const minVal = allPairs.length > 0 ? allPairs[allPairs.length - 1].score : 0;
+            // Use Pre-computed Global Max/Min from backend
+            const maxVal = data.global_max_score !== undefined ? data.global_max_score : (allPairs.length > 0 ? allPairs[0].score : 0);
+            const minVal = data.global_min_score !== undefined ? data.global_min_score : 0;
 
             document.getElementById('maxScore').textContent = maxVal.toFixed(4);
             document.getElementById('minScore').textContent = minVal.toFixed(4);
@@ -514,19 +549,10 @@
             // Slice Lists
             const top5 = allPairs.slice(0, 5);
 
-            // Bottom 5: The last 5 items. 
-            // allPairs is [Best ... Worst].
-            // allPairs.slice(-5) gives [5th Worst, 4th Worst, ..., Worst]. (Descending score: 0.2, 0.15, 0.1)
-            // User wants "order the 5 least similar from worst to best".
-            // So we want [Worst, 2nd Worst, ...].
-            // So slice last 5, and REVERSE it.
-            let bottom5 = allPairs.slice(-5).reverse();
+            // Bottom 5 is now provided by backend
+            const bottom5 = data.least_similar || [];
 
             // Render Lists
-            // For Rank:
-            // Top 5: Rank is simply index + 1
-            // Bottom 5: Rank is Total - Index (since we reversed it, the first item is the Last global item i.e. Rank Total)
-
             document.getElementById('most').innerHTML = renderList(top5, data.strategy, "Most Similar", 1, totalPairs);
             document.getElementById('least').innerHTML = renderList(bottom5, data.strategy, "Least Similar", totalPairs, totalPairs, true);
 
@@ -537,6 +563,8 @@
             if (data.points) {
                 currentScatterData = data.points;
                 currentStrategy = data.strategy;
+                // Update Point Count
+                document.getElementById('pointCount').textContent = data.points.length;
                 updateScatter();
             }
         }
@@ -573,21 +601,18 @@
                 const id2 = pair.pair[1];
                 const score = pair.score.toFixed(4);
 
-                // Calculate Rank
-                // If Top: 1, 2, 3... -> startRank + index
-                // If Bottom (Reversed): Total, Total-1, ... -> startRank - index
-
                 let rank;
                 if (!isReversed) {
                     rank = startRank + index;
                 } else {
-                    rank = startRank - index;
+                    // This rank calculation is approximate if sliced
+                    rank = totalPairs - index;
                 }
 
                 html += `
                     <div class="pair-card rank-${rank}">
                         <div class="pair-header">
-                            <span class="rank-badge">#${rank} of ${totalPairs} Similarity Ranking</span>
+                            <span class="rank-badge">#${rank} Similarity Ranking</span>
                             <span class="score">Score: ${score}</span>
                         </div>
                         <div class="comparison">
@@ -605,11 +630,6 @@
             // Unique ID for the text container
             const textId = `text-${id}-${Math.floor(Math.random() * 1000)}`;
 
-            // Only fetch text if strategy is 'text', but logic is generic enough
-            // We use a small inline script or fetch after render? 
-            // Better: Return HTML with a data-attribute and use a single Observer or loop to load text?
-            // Simplest: Generic fetch script below.
-
             setTimeout(() => {
                 fetch(`/debug/text/${strategy}/${id}`)
                     .then(r => {
@@ -619,7 +639,10 @@
                     .then(text => {
                         if (text) {
                             const el = document.getElementById(textId);
-                            if (el) el.textContent = text;
+                            if (el) {
+                                el.textContent = text;
+                                el.style.display = 'block';
+                            }
                         }
                     });
             }, 100);
@@ -636,7 +659,7 @@
                             <div class="debug-label" style="bottom:5px; left:5px; top:auto;">Debug Input</div>
                             
                             <!-- Text Overlay -->
-                            <div id="${textId}" class="text-overlay"></div>
+                            <div id="${textId}" class="text-overlay" style="display:none;"></div>
                         </div>
                     </div>
                 </div>
@@ -697,7 +720,7 @@
             };
 
             const layout = {
-                title: `${useMethod.toUpperCase()} Embedding Space`,
+                title: `${useMethod.toUpperCase()} Embedding Space (N=${points.length})`,
                 hovermode: 'closest',
                 dragmode: 'pan',
                 xaxis: { title: 'Dimension 1', zeroline: false },

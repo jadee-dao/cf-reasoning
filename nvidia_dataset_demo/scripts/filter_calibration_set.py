@@ -26,45 +26,54 @@ def main():
     scenes = data["results"]
     print(f"Found {len(scenes)} scenes.")
     
-    # Calculate score for each scene
-    # We use the maximum 'ade_xy' from the 'top3_worst' frames as the scene score.
-    scene_scores = []
-    
+    # Collect all frame scores
+    all_frame_scores = []
     for key, val in scenes.items():
-        max_ade = 0.0
         if "top3_worst" in val and isinstance(val["top3_worst"], list):
             for frame in val["top3_worst"]:
                 ade = frame.get("ade_xy", 0.0)
-                if ade > max_ade:
-                    max_ade = ade
-        
-        scene_scores.append({
-            "key": key,
-            "data": val,
-            "score": max_ade
-        })
-        
-    # Sort by score descending (worst first)
-    scene_scores.sort(key=lambda x: x["score"], reverse=True)
+                all_frame_scores.append(ade)
     
+    # Sort scores descending
+    all_frame_scores.sort(reverse=True)
+    
+    total_frames = len(all_frame_scores)
+    if total_frames == 0:
+        print("No frames found in input data.")
+        return
+
     # Calculate cutoff
-    count = len(scene_scores)
-    keep_count = int(np.ceil(count * (args.percentile / 100.0)))
+    keep_count = int(np.ceil(total_frames * (args.percentile / 100.0)))
     keep_count = max(1, keep_count) # Keep at least one
     
-    print(f"Keeping top {args.percentile}% scenes: {keep_count} out of {count}")
+    cutoff_score = all_frame_scores[keep_count - 1]
+    print(f"Keeping top {args.percentile}% frames: {keep_count} out of {total_frames}")
+    print(f"Score cutoff: >= {cutoff_score:.4f} (Max: {all_frame_scores[0]:.4f})")
     
-    top_scenes = scene_scores[:keep_count]
-    if top_scenes:
-        cutoff_score = top_scenes[-1]["score"]
-        print(f"Score cutoff: >= {cutoff_score:.4f} (Max: {top_scenes[0]['score']:.4f})")
+    # Filter scenes and frames
+    new_results = {}
+    kept_frame_count = 0
     
-    # Construct new data
-    new_results = {item["key"]: item["data"] for item in top_scenes}
+    for key, val in scenes.items():
+        if "top3_worst" not in val or not isinstance(val["top3_worst"], list):
+            continue
+            
+        kept_frames = []
+        for frame in val["top3_worst"]:
+            if frame.get("ade_xy", 0.0) >= cutoff_score:
+                kept_frames.append(frame)
+        
+        if kept_frames:
+            new_entry = val.copy()
+            new_entry["top3_worst"] = kept_frames
+            new_results[key] = new_entry
+            kept_frame_count += len(kept_frames)
+            
+    print(f"Retained {len(new_results)} scenes containing {kept_frame_count} frames.")
     
     new_data = data.copy()
     new_data["results"] = new_results
-    new_data["num_scenes"] = len(new_results) # Update count if it exists
+    new_data["num_scenes"] = len(new_results)
     
     print(f"Saving to {args.output}...")
     with open(args.output, 'w') as f:
@@ -73,12 +82,12 @@ def main():
     # --- Plotting ---
     import matplotlib.pyplot as plt
     
-    all_scores = [x["score"] for x in scene_scores]
+    all_scores = all_frame_scores
     
     plt.figure(figsize=(10, 6))
-    plt.hist(all_scores, bins=50, color='skyblue', edgecolor='black', alpha=0.7, label='ADE Scores')
+    plt.hist(all_scores, bins=50, color='skyblue', edgecolor='black', alpha=0.7, label='ADE Scores (Frames)')
     
-    if top_scenes:
+    if kept_frame_count > 0:
         plt.axvline(cutoff_score, color='red', linestyle='dashed', linewidth=2, label=f'Cutoff (Top {args.percentile}%: {cutoff_score:.4f})')
     
     plt.title('ADE Score Distribution')

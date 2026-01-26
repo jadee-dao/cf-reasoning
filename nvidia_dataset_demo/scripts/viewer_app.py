@@ -121,18 +121,62 @@ def get_result(filename):
                     for k in k_values:
                         p[f"cluster_k{k}"] = int(clusters[k][i])
 
-        # Load Acceleration Outliers
-        accel_outliers_path = os.path.join(DATA_DIR, "accel_outliers_sample_ids.txt")
+        # Load Acceleration Outliers (from JSON)
+        accel_outliers_path = os.path.join(DATA_DIR, "calibration_set/worst-ade-log-10-90pctl.json")
         accel_outliers = set()
         if os.path.exists(accel_outliers_path):
-            with open(accel_outliers_path, 'r') as f:
-                accel_outliers = {line.strip() for line in f if line.strip()}
+            try:
+                with open(accel_outliers_path, 'r') as f:
+                    outlier_data = json.load(f)
+                    if "results" in outlier_data:
+                        for chunk_key, res in outlier_data["results"].items():
+                            scene_id = res.get("scene_id")
+                            if scene_id and "top3_worst" in res:
+                                for item in res["top3_worst"]:
+                                    t_val = item.get("t_rel_us")
+                                    if t_val is not None:
+                                        accel_outliers.add(f"{scene_id}_{t_val}")
+            except Exception as e:
+                print(f"Error loading outlier JSON: {e}")
         
         # Mark acceleration outliers
         if "points" in data:
             for p in data["points"]:
                 p["is_accel_outlier"] = p["id"] in accel_outliers
-                        
+        
+        # Filter and Slice Pairs
+        from flask import request
+        filter_same_id = request.args.get('filter_same_id', 'false').lower() == 'true'
+        
+        if "all_pairs" in data:
+            pairs = data["all_pairs"]
+            
+            if filter_same_id:
+                filtered_pairs = []
+                for p in pairs:
+                    # id format: UUID_TIMESTAMP
+                    id1 = p["pair"][0]
+                    id2 = p["pair"][1]
+                    uuid1 = id1.rsplit('_', 1)[0] if '_' in id1 else id1
+                    uuid2 = id2.rsplit('_', 1)[0] if '_' in id2 else id2
+                    if uuid1 != uuid2:
+                        filtered_pairs.append(p)
+                pairs = filtered_pairs
+            
+            # Compute stats BEFORE Slicing
+            if pairs:
+                data["global_max_score"] = pairs[0]["score"]
+                data["global_min_score"] = pairs[-1]["score"]
+                data["least_similar"] = pairs[-5:][::-1] # Reverse to have worst first
+                data["total_pairs"] = len(pairs) # Update total count based on filter
+            else:
+                data["global_max_score"] = 0
+                data["global_min_score"] = 0
+                data["least_similar"] = []
+                data["total_pairs"] = 0
+
+            data["all_pairs"] = pairs[:100]
+
         return jsonify(data)
         
     except Exception as e:
@@ -177,8 +221,19 @@ def get_debug_text(strategy, id):
     # Debug text saved as {id}.txt inside the strategy folder
     filename = f"{id}.txt"
     strategy_dir = os.path.join(DEBUG_DIR, strategy)
-    if os.path.exists(os.path.join(strategy_dir, filename)):
-        return send_from_directory(strategy_dir, filename)
+    file_path = os.path.join(strategy_dir, filename)
+    
+    if os.path.exists(file_path):
+        # Check content for "failed" string
+        try:
+            with open(file_path, 'r') as f:
+                content = f.read()
+                if "analysis failed" in content.lower():
+                     return "No text description available.", 404
+                return content
+        except Exception:
+            return "Error reading description.", 500
+            
     return "No text description available.", 404
 
 if __name__ == '__main__':
