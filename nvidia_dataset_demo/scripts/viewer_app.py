@@ -1,19 +1,16 @@
-from flask import Flask, jsonify, send_from_directory, render_template
+from flask import Flask, jsonify, send_from_directory, render_template, request
 import os
 import glob
 import json
-import csv
-from sklearn.cluster import KMeans
-from sklearn.ensemble import IsolationForest
-import numpy as np
 
 app = Flask(__name__)
 
 # Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "../extracted_data")
+# analysis_results is local to scripts/
 RESULTS_DIR = os.path.join(BASE_DIR, "analysis_results")
-DEBUG_DIR = os.path.join(RESULTS_DIR, "debug_images")
+# extracted_data is ../extracted_data
+DATA_ROOT = os.path.join(BASE_DIR, "../extracted_data")
 
 @app.route('/')
 def index():
@@ -21,223 +18,233 @@ def index():
 
 @app.route('/api/list')
 def list_results():
-    pattern = os.path.join(RESULTS_DIR, "results_*.json")
-    files = glob.glob(pattern)
-    filenames = [os.path.basename(f) for f in files]
-    return jsonify(filenames)
+    # Return structure: { "strategies": [...], "datasets": { "strategy": [d1, d2] } }
+    base_proj = os.path.join(RESULTS_DIR, "projections")
+    strategies = []
+    structure = {}
+    
+    if os.path.exists(base_proj):
+        # List strategies (folders)
+        for strat in os.listdir(base_proj):
+            strat_path = os.path.join(base_proj, strat)
+            if os.path.isdir(strat_path):
+                strategies.append(strat)
+                structure[strat] = []
+                # List datasets (json files)
+                for f in os.listdir(strat_path):
+                    if f.endswith(".json"):
+                        dataset = os.path.splitext(f)[0]
+                        structure[strat].append(dataset)
+                structure[strat].sort()
+                
+    strategies.sort()
+    return jsonify({
+        "strategies": strategies,
+        "structure": structure
+    })
 
-@app.route('/api/results/<filename>')
-def get_result(filename):
-    try:
-        file_path = os.path.join(RESULTS_DIR, filename)
-        if not os.path.exists(file_path):
-            return "File not found", 404
-            
-        with open(file_path, 'r') as f:
-            data = json.load(f)
+@app.route('/api/results')
+def get_result():
+    # Query params: strategy, datasets (comma-separated), filter_same_id, filter_diff_dataset
+    strategy = request.args.get('strategy')
+    datasets_str = request.args.get('datasets')
+    filter_same = request.args.get('filter_same_id', 'false') == 'true'
+    filter_diff_dataset = request.args.get('filter_diff_dataset', 'false') == 'true'
+    
+    if not strategy or not datasets_str:
+        return "Missing strategy or datasets parameter", 400
+        
+    datasets = datasets_str.split(',')
+    
+    all_points = []
+    all_pairs = []
+    
+    # Lookup: id -> dataset
+    id_to_dataset = {}
+    
+    # 1. Load Independent Projections (Points)
+    for dataset in datasets:
+        dataset = dataset.strip()
+        if not dataset: continue
+        if dataset == "global": continue # specific check to avoid loading global as independent
+        
+        proj_path = os.path.join(RESULTS_DIR, "projections", strategy, f"{dataset}.json")
+        if os.path.exists(proj_path):
+            with open(proj_path, 'r') as f:
+                data = json.load(f) # {"points": [...]}
+                for p in data.get("points", []):
+                    if "dataset" not in p:
+                        p["dataset"] = dataset 
+                    id_to_dataset[p["id"]] = p["dataset"]
+                    
+                    # Rename 'projections' to 'projections_independent'
+                    if "projections" in p:
+                        p["projections_independent"] = p.pop("projections")
+                        
+                    all_points.append(p)
 
-        # Attempt to load corresponding CSV projections
-        strategy_name = filename.replace("results_", "").replace(".json", "")
-        csv_filename = f"projections_{strategy_name}.csv"
-        csv_path = os.path.join(RESULTS_DIR, csv_filename)
+    # 2. Load Global Projections and Merge
+    global_path = os.path.join(RESULTS_DIR, "projections", strategy, "global.json")
+    if os.path.exists(global_path) and all_points:
+        # Build lookup for currently loaded points to avoid iterating full global file if huge? 
+        # Actually we have to read global file anyway.
+        # Let's read global file and create a map for RELEVANT IDs.
+        
+        # Optimization: Set of loaded IDs
+        loaded_ids = set(p["id"] for p in all_points)
+        
+        with open(global_path, 'r') as f:
+            g_data = json.load(f)
+            for gp in g_data.get("points", []):
+                if gp["id"] in loaded_ids:
+                    # Find the point object in all_points (need a map or linear scan? linear is slow)
+                    # Let's map all_points by ID first
+                    pass 
+                    
+        # Map all_points by ID for fast merge
+        points_map = {p["id"]: p for p in all_points}
+        
+        with open(global_path, 'r') as f:
+            g_data = json.load(f)
+            for gp in g_data.get("points", []):
+                if gp["id"] in points_map:
+                    # Attach global projections
+                    points_map[gp["id"]]["projections_global"] = gp.get("projections", {})
+                    # Also merge clusters/outliers from global if needed? 
+                    # Usually global outlier/clusters are what we want for "global" view.
+                    # They are inside 'projections' usually in our structure (mixed in).
+                    # Wait, compute_projections structure:
+                    # point_data["projections"][method] = {x, y, is_outlier, cluster_k3...}
+                    # So copying "projections" is correct.
 
-        if os.path.exists(csv_path):
-            print(f"Merging external projections from {csv_filename}...")
-            csv_data = {}
-            with open(csv_path, 'r') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    csv_data[row['id']] = row
-            
-            if "points" in data:
-                for p in data["points"]:
-                    pid = p["id"]
-                    if pid in csv_data:
-                        row = csv_data[pid]
-                        try:
-                            # Update projection fields using .get with default '0' strings for safety
-                            p["pca"] = [float(row.get('pca_1', '0')), float(row.get('pca_2', '0'))]
-                            if 'tsne_1' in row and row['tsne_1']:
-                                p["tsne"] = [float(row['tsne_1']), float(row['tsne_2'])]
-                            if 'umap_1' in row and row['umap_1']:
-                                p["umap"] = [float(row['umap_1']), float(row['umap_2'])]
+    # 3. Load Similarities (Pairs)
+    for dataset in datasets:
+        dataset = dataset.strip()
+        if not dataset: continue
+        if dataset == "global": continue
+        
+        sim_path = os.path.join(RESULTS_DIR, "similarities", strategy, f"{dataset}.json")
+        if os.path.exists(sim_path):
+            with open(sim_path, 'r') as f:
+                sim_dict = json.load(f)
+                
+                # Helper to process items
+                def process_item(item_pair, item_score):
+                    id1, id2 = item_pair
+                    
+                    # Filter: Same Scene (using rsplit to be robust)
+                    if filter_same:
+                        # Split on LAST underscore: scene-123_456 -> scene-123
+                        base1 = id1.rsplit('_', 1)[0]
+                        base2 = id2.rsplit('_', 1)[0]
+                        if base1 == base2:
+                            return None
                             
-                            # Update cluster fields
-                            for k in [3, 5, 8]:
-                                key = f"cluster_k{k}"
-                                if key in row and row[key]:
-                                    p[key] = int(row[key])
+                    # Filter: Different Datasets Only
+                    if filter_diff_dataset:
+                        d1 = id_to_dataset.get(id1)
+                        d2 = id_to_dataset.get(id2)
+                        # If either is unknown, keep it? Or skip? Let's skip if both known and equal.
+                        if d1 and d2 and d1 == d2:
+                            return None
                             
-                            # Update outlier status
-                            if "is_outlier" in row:
-                                # CSV: -1 is outlier, 1 is inlier. Map -1 to True.
-                                val = int(row["is_outlier"])
-                                p["is_outlier"] = (val == -1)
-                        except (ValueError, TypeError) as e:
-                            # Log but accumulate successfully parsed parts, or skip this point update?
-                            # For now, print error and continue with what we have
-                            print(f"Error parsing CSV data for {pid}: {e}")
-            
-        # Check if we need to augment with clusters on-the-fly
-        if "points" in data and data["points"]:
-            sample = data["points"][0]
-            # Only compute if missing and if no external CSV provided them (though CSV logic above should have filled them)
-            # The previous logic checked 'cluster_k3' not in sample.
-            # If CSV merge happened, sample has it. If not, we compute.
-            if "cluster_k3" not in sample:
-                print(f"Augmenting {filename} with clusters on-the-fly...")
-                
-                # Extract coordinates for clustering
-                # Prefer tsne, then pca, then just x/y
-                coords = []
-                for p in data["points"]:
-                    if "tsne" in p:
-                        coords.append(p["tsne"])
-                    elif "pca" in p:
-                        coords.append(p["pca"])
-                    else:
-                        coords.append([p.get("x", 0), p.get("y", 0)])
-                
-                X = np.array(coords)
-                n_samples = len(X)
-                
-                # 1. Outliers
-                iso = IsolationForest(contamination='auto', random_state=42)
-                outliers = iso.fit_predict(X)
-                
-                # 2. Clusters
-                k_values = [3, 5, 8]
-                clusters = {}
-                for k in k_values:
-                    if n_samples >= k:
-                        kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-                        clusters[k] = kmeans.fit_predict(X)
-                    else:
-                        clusters[k] = np.zeros(n_samples)
-                
-                # Inject back
-                for i, p in enumerate(data["points"]):
-                    p["is_outlier"] = bool(outliers[i] == -1)
-                    for k in k_values:
-                        p[f"cluster_k{k}"] = int(clusters[k][i])
+                    return {
+                        "pair": [id1, id2],
+                        "score": float(item_score),
+                        "dataset": dataset
+                    }
 
-        # Load Acceleration Outliers (from JSON)
-        accel_outliers_path = os.path.join(DATA_DIR, "calibration_set/worst-ade-log-10-90pctl.json")
-        accel_outliers = set()
-        if os.path.exists(accel_outliers_path):
-            try:
-                with open(accel_outliers_path, 'r') as f:
-                    outlier_data = json.load(f)
-                    if "results" in outlier_data:
-                        for chunk_key, res in outlier_data["results"].items():
-                            scene_id = res.get("scene_id")
-                            if scene_id and "top3_worst" in res:
-                                for item in res["top3_worst"]:
-                                    t_val = item.get("t_rel_us")
-                                    if t_val is not None:
-                                        accel_outliers.add(f"{scene_id}_{t_val}")
-            except Exception as e:
-                print(f"Error loading outlier JSON: {e}")
-        
-        # Mark acceleration outliers
-        if "points" in data:
-            for p in data["points"]:
-                p["is_accel_outlier"] = p["id"] in accel_outliers
-        
-        # Filter and Slice Pairs
-        from flask import request
-        filter_same_id = request.args.get('filter_same_id', 'false').lower() == 'true'
-        
-        if "all_pairs" in data:
-            pairs = data["all_pairs"]
-            
-            if filter_same_id:
-                filtered_pairs = []
-                for p in pairs:
-                    # id format: UUID_TIMESTAMP
-                    id1 = p["pair"][0]
-                    id2 = p["pair"][1]
-                    uuid1 = id1.rsplit('_', 1)[0] if '_' in id1 else id1
-                    uuid2 = id2.rsplit('_', 1)[0] if '_' in id2 else id2
-                    if uuid1 != uuid2:
-                        filtered_pairs.append(p)
-                pairs = filtered_pairs
-            
-            # Compute stats BEFORE Slicing
-            if pairs:
-                data["global_max_score"] = pairs[0]["score"]
-                data["global_min_score"] = pairs[-1]["score"]
-                data["least_similar"] = pairs[-5:][::-1] # Reverse to have worst first
-                data["total_pairs"] = len(pairs) # Update total count based on filter
-            else:
-                data["global_max_score"] = 0
-                data["global_min_score"] = 0
-                data["least_similar"] = []
-                data["total_pairs"] = 0
+                # Handle dict or list format
+                if isinstance(sim_dict, dict):
+                    for id1, targets in sim_dict.items():
+                        for id2, score in targets.items():
+                            res = process_item([id1, id2], score)
+                            if res: all_pairs.append(res)
+                elif isinstance(sim_dict, list):
+                    for item in sim_dict:
+                        res = process_item(item["pair"], item["score"])
+                        if res: all_pairs.append(res)
 
-            data["all_pairs"] = pairs[:100]
+    # Sort entire list of pairs descending
+    all_pairs.sort(key=lambda x: x["score"], reverse=True)
+    
+    # Global Stats
+    max_score = all_pairs[0]["score"] if all_pairs else 0
+    min_score = all_pairs[-1]["score"] if all_pairs else 0
+    
+    response = {
+        "strategy": strategy,
+        "datasets": datasets,
+        "points": all_points,
+        "all_pairs": all_pairs[:200], # Top 200
+        "least_similar": all_pairs[-20:][::-1] if len(all_pairs) > 20 else all_pairs[::-1][:20], # Bottom 20
+        "total_pairs": len(all_pairs),
+        "global_max_score": max_score,
+        "global_min_score": min_score
+    }
+    
+    return jsonify(response)
 
-        return jsonify(data)
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return f"Internal Server Error: {str(e)}", 500
 
-@app.route('/video/<id>')
+@app.route('/video/<path:id>')
 def get_video(id):
-    # Construct filename: UUID.camera_front_wide_120fov.mp4
-    # Handle IDs with timestamp suffix (e.g. UUID_TIMESTAMP)
+    # ID might be just UUID_TIMESTAMP or maybe have dataset?
+    # We search extracted_data/*/samples/{id}.mp4
     
-    if '_' in id:
-        parts = id.rsplit('_', 1)
-        if parts[1].isdigit():
-            uuid_val = parts[0]
-            timestamp = parts[1]
-            
-            # Check for interval clip in 1.5s directory
-            # Path: DATA_DIR/interval_samples/1.5s/UUID/TIMESTAMP.mp4
-            interval_dir = os.path.join(DATA_DIR, "interval_samples", "1.5s", uuid_val)
-            clip_filename = f"{timestamp}.mp4"
-            
-            if os.path.exists(os.path.join(interval_dir, clip_filename)):
-                return send_from_directory(interval_dir, clip_filename)
-                
-            # If clip not found, fallback to UUID for full video (though user complained about this)
-            id = uuid_val
+    # Security check: id shouldn't have ..
+    if ".." in id:
+         return "Invalid ID", 400
+         
+    # Try to find the file
+    # Pattern: extracted_data/*/samples/{id}.mp4
+    pattern = os.path.join(DATA_ROOT, "*", "samples", f"{id}.mp4")
+    matches = glob.glob(pattern)
+    
+    if matches:
+        # Take first match
+        path = matches[0]
+        directory = os.path.dirname(path)
+        filename = os.path.basename(path)
+        return send_from_directory(directory, filename)
+        
+    return "Video not found", 404
 
-    filename = f"{id}.camera_front_wide_120fov.mp4"
-    return send_from_directory(DATA_DIR, filename)
-
-@app.route('/debug/<strategy>/<id>')
-def get_debug_image(strategy, id):
-    # Debug images are saved as {id}.jpg inside the strategy folder
+@app.route('/debug/<path:selection>/<id>')
+def get_debug_image(selection, id):
+    # selection is "STRATEGY/DATASET"
+    if "/" not in selection:
+        return "Invalid selection", 400
+        
+    strategy, dataset = selection.split("/", 1)
+    
+    # Path: analysis_results/visualize_samples/{strategy}/{dataset}/{id}.jpg
+    img_dir = os.path.join(RESULTS_DIR, "visualize_samples", strategy, dataset)
     filename = f"{id}.jpg"
-    strategy_dir = os.path.join(DEBUG_DIR, strategy)
-    return send_from_directory(strategy_dir, filename)
-
-@app.route('/debug/text/<strategy>/<id>')
-def get_debug_text(strategy, id):
-    # Debug text saved as {id}.txt inside the strategy folder
-    filename = f"{id}.txt"
-    strategy_dir = os.path.join(DEBUG_DIR, strategy)
-    file_path = os.path.join(strategy_dir, filename)
     
-    if os.path.exists(file_path):
-        # Check content for "failed" string
-        try:
-            with open(file_path, 'r') as f:
-                content = f.read()
-                if "analysis failed" in content.lower():
-                     return "No text description available.", 404
-                return content
-        except Exception:
-            return "Error reading description.", 500
-            
-    return "No text description available.", 404
+    if os.path.exists(os.path.join(img_dir, filename)):
+        return send_from_directory(img_dir, filename)
+        
+    return "Debug image not found", 404
+
+@app.route('/debug_text/<path:selection>/<id>')
+def get_debug_text(selection, id):
+    # selection is "STRATEGY/DATASET"
+    if "/" not in selection:
+        return "Invalid selection", 400
+        
+    strategy, dataset = selection.split("/", 1)
+    
+    # Path: analysis_results/visualize_samples/{strategy}/{dataset}/{id}.txt
+    txt_dir = os.path.join(RESULTS_DIR, "visualize_samples", strategy, dataset)
+    filename = f"{id}.txt"
+    filepath = os.path.join(txt_dir, filename)
+    
+    if os.path.exists(filepath):
+        with open(filepath, 'r') as f:
+            return f.read()
+        
+    return "", 404
 
 if __name__ == '__main__':
     print(f"Starting viewer on http://localhost:8081")
-    print(f"Data Dir: {DATA_DIR}")
-    print(f"Results Dir: {RESULTS_DIR}")
     app.run(debug=True, port=8081, host='0.0.0.0')

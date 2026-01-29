@@ -311,9 +311,22 @@
         <h1>Embedding Analysis Results</h1>
 
         <div class="controls">
-            <select id="fileSelect">
-                <option value="">Loading...</option>
-            </select>
+            <div style="margin-bottom: 10px;">
+                <label for="strategySelect"
+                    style="font-weight:bold; display:block; margin-bottom:5px;">Strategy:</label>
+                <select id="strategySelect" onchange="loadStrategy()">
+                    <option value="">Loading...</option>
+                </select>
+            </div>
+
+            <div>
+                <label style="font-weight:bold; display:block; margin-bottom:5px;">Datasets:</label>
+                <div id="datasetCheckboxes"
+                    style="display:flex; flex-wrap:wrap; gap:15px; background:#f9f9f9; padding:10px; border-radius:4px; border:1px solid #ddd;">
+                    <!-- Checkboxes will be injected here -->
+                    <span style="color:#666;">Select a strategy first.</span>
+                </div>
+            </div>
         </div>
 
         <div id="loading" style="display:none; text-align: center; padding: 20px;">Loading data...</div>
@@ -341,11 +354,14 @@
 
             <!-- Header Controls -->
             <div
-                style="margin-bottom: 20px; padding: 15px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);">
+                style="margin-bottom: 20px; padding: 15px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); display:flex; gap:20px; flex-wrap:wrap;">
                 <label style="font-weight:bold; cursor:pointer; font-size: 16px;">
                     <input type="checkbox" id="filterSameId" onchange="reloadData()"> Show Different Scenes Only
-                    <span style="font-weight:normal; color:#666; margin-left:5px;">(Hides pairs from the same UUID
-                        sequence)</span>
+                    <span style="font-weight:normal; color:#666; margin-left:5px;">(Same UUID sequence)</span>
+                </label>
+                <label style="font-weight:bold; cursor:pointer; font-size: 16px;">
+                    <input type="checkbox" id="filterDiffDataset" onchange="reloadData()"> Show Different Datasets Only
+                    <span style="font-weight:normal; color:#666; margin-left:5px;">(Cross-Dataset Only)</span>
                 </label>
             </div>
 
@@ -364,28 +380,43 @@
                 <div style="margin-bottom:15px; display:flex; justify-content:space-between; align-items:center;">
                     <div style="font-size:0.9em; color:#666; max-width:60%;">
                         <strong>About the Plot:</strong>
-                        Displaying <span id="pointCount" style="font-weight:bold;">-</span> points.
+                        Displaying <span id="pointCount" style="font-weight:bold;">-</span> points from <span
+                            id="datasetCount" style="font-weight:bold;">-</span> datasets.
                         <br>
-                        <strong>Outliers:</strong> Detected via Isolation Forest (contamination='auto') on embedding
-                        coordinates.
+                        <strong>Outliers:</strong> Detected via Isolation Forest on embedding coordinates.
                         <br>
-                        <strong>Accel Outliers:</strong> Highlighted based on top 3 worst ADE frames from
-                        <code>worst-ade-log-10-90pctl.json</code>.
+                        <strong>Calibration Set:</strong> Highlighted with orange border (based on 'scene-' ID pattern).
                     </div>
                     <div style="display:flex; align-items:center; gap:20px;">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <label for="outlierSetSelect" style="font-weight:bold;">GT Outlier Set:</label>
+                            <select id="outlierSetSelect" style="width:150px; padding:5px; margin:0;"
+                                onchange="updateScatter()">
+                                <option value="">None</option>
+                            </select>
+                        </div>
                         <div style="display:flex; align-items:center; gap:10px;">
                             <label for="colorSelect" style="font-weight:bold;">Color By:</label>
                             <select id="colorSelect" style="width:150px; padding:5px; margin:0;"
                                 onchange="updateScatter()">
+                                <option value="dataset">Dataset Source</option>
                                 <option value="uniform">Uniform (Blue)</option>
-                                <option value="outlier">Outliers (Red)</option>
+                                <option value="outlier">Calc. Outliers (Red)</option>
                                 <option value="cluster_k3">Clusters (K=3)</option>
                                 <option value="cluster_k5">Clusters (K=5)</option>
                                 <option value="cluster_k8">Clusters (K=8)</option>
                             </select>
                         </div>
                         <div style="display:flex; align-items:center; gap:10px;">
-                            <label for="projectionSelect" style="font-weight:bold;">Projection Method:</label>
+                            <label for="scopeSelect" style="font-weight:bold;">Scope:</label>
+                            <select id="scopeSelect" style="width:150px; padding:5px; margin:0;"
+                                onchange="updateScatter()">
+                                <option value="independent">Independent</option>
+                                <option value="global">Global Combined</option>
+                            </select>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <label for="projectionSelect" style="font-weight:bold;">Method:</label>
                             <select id="projectionSelect" style="width:150px; padding:5px; margin:0;"
                                 onchange="updateScatter()">
                                 <option value="tsne">t-SNE</option>
@@ -406,7 +437,7 @@
                     <div style="display:flex; align-items:center; gap:5px;">
                         <span
                             style="width:12px; height:12px; border-radius:50%; background-color:transparent; border: 3px solid #ff8c00; display:inline-block;"></span>
-                        Acceleration Outlier
+                        Highlight (GT Outlier)
                     </div>
                 </div>
                 <div id="scatterPlot"
@@ -415,312 +446,456 @@
                 <div id="scatterDetail" style="margin-top:20px;"></div>
             </div>
             <div id="leaderboard" class="section">
-
-                <table>
-                    <thead>
-                        <tr>
-                            <th width="80">Rank</th>
-                            <th width="100">Score</th>
-                            <th>Pairing (ID 1 vs ID 2)</th>
-                        </tr>
-                    </thead>
-                    <tbody id="leaderboardBody"></tbody>
-                </table>
+                <!-- ... -->
             </div>
         </div>
     </div>
 
-    <!-- Detail Modal -->
-    <div id="detailModal" class="modal-overlay" onclick="closeModal(event)">
-        <div class="modal-content" onclick="event.stopPropagation()">
-            <span class="close-btn" onclick="closeModal()">×</span>
-            <div id="modalBody"></div>
-        </div>
-    </div>
+    <!-- ... (Modals remain same) ... -->
 
     <script>
-        const fileSelect = document.getElementById('fileSelect');
-        const dashboard = document.getElementById('dashboard');
-        const loadingDiv = document.getElementById('loading');
-        const modal = document.getElementById('detailModal');
-        const modalBody = document.getElementById('modalBody');
-        const filterSameId = document.getElementById('filterSameId');
-
+        let currentStrategy = '';
         let currentScatterData = null;
-        let currentStrategy = null;
+        let strategyStructure = {};
+        let availableDatasets = [];
 
-        // Load file list
-        fetch('/api/list')
-            .then(response => response.json())
-            .then(files => {
-                fileSelect.innerHTML = '<option value="">-- Choose a Result File --</option>';
-                files.forEach(file => {
-                    const option = document.createElement('option');
-                    option.value = file;
-                    option.textContent = file;
-                    fileSelect.appendChild(option);
-                });
-            });
+        // Initialize
+        window.onload = async function () {
+            try {
+                const response = await fetch('/api/list');
+                const data = await response.json();
 
-        // Handle selection
-        fileSelect.addEventListener('change', (e) => {
-            reloadData();
-        });
+                strategyStructure = data.structure || {};
 
-        function reloadData() {
-            const filename = fileSelect.value;
-            if (!filename) {
-                dashboard.style.display = 'none';
+                const stratSelect = document.getElementById('strategySelect');
+                stratSelect.innerHTML = '';
+
+                if (data.strategies.length > 0) {
+                    data.strategies.forEach(s => {
+                        const opt = document.createElement('option');
+                        opt.value = s;
+                        opt.textContent = s;
+                        stratSelect.appendChild(opt);
+                    });
+
+                    // Explicitly select the first one
+                    stratSelect.value = data.strategies[0];
+
+                    // Initialize first strategy
+                    initStrategy();
+                }
+            } catch (e) {
+                console.error("Error loading strategies:", e);
+            }
+        };
+
+        function initStrategy() {
+            const strategy = document.getElementById('strategySelect').value;
+            if (!strategy) return;
+
+            // Get datasets for this strategy
+            availableDatasets = (strategyStructure[strategy] || []).filter(d => d !== 'global');
+
+            renderCheckboxes();
+            loadData();
+        }
+
+        function renderCheckboxes() {
+            const boxesDiv = document.getElementById('datasetCheckboxes');
+            boxesDiv.innerHTML = '';
+
+            if (availableDatasets.length === 0) {
+                boxesDiv.innerHTML = '<span style="color:#666;">No datasets found.</span>';
                 return;
             }
 
-            const useFilter = filterSameId.checked;
+            availableDatasets.forEach(d => {
+                const label = document.createElement('label');
+                label.style.marginRight = '15px';
+                label.style.cursor = 'pointer';
+                // Default to checked
+                label.innerHTML = `<input type="checkbox" value="${d}" checked onchange="loadData()"> ${d}`;
+                boxesDiv.appendChild(label);
+            });
+        }
 
-            loadingDiv.style.display = 'block';
 
-            // Only hide dashboard if we are loading a NEW file, maybe keep it visible for filter?
-            // User experience: better to show loading state.
-            dashboard.style.opacity = '0.5';
 
-            fetch(`/api/results/${filename}?filter_same_id=${useFilter}`)
-                .then(response => response.json())
-                .then(data => {
-                    loadingDiv.style.display = 'none';
-                    dashboard.style.display = 'block';
-                    dashboard.style.opacity = '1';
-                    renderDashboard(data);
-                });
+        async function loadData() {
+            const strategy = document.getElementById('strategySelect').value;
+            if (!strategy) return;
+
+            document.getElementById('strategyName').textContent = strategy;
+
+            // Read checkboxes
+            let datasetsToLoad = [];
+            document.querySelectorAll('#datasetCheckboxes input[type="checkbox"]:checked').forEach(cb => {
+                datasetsToLoad.push(cb.value);
+            });
+
+            if (datasetsToLoad.length === 0) {
+                renderDashboard({ strategy: strategy, datasets: [], points: [], all_pairs: [] });
+                return;
+            }
+
+            // Show loading
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('dashboard').style.opacity = '0.5';
+
+            try {
+                const filterSame = document.getElementById('filterSameId').checked;
+                const filterDiff = document.getElementById('filterDiffDataset').checked;
+
+                const response = await fetch(`/api/results?strategy=${strategy}&datasets=${datasetsToLoad.join(',')}&filter_same_id=${filterSame}&filter_diff_dataset=${filterDiff}`);
+                const data = await response.json();
+
+                data.strategy = strategy;
+                renderDashboard(data);
+
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('dashboard').style.display = 'block';
+                document.getElementById('dashboard').style.opacity = '1.0';
+
+            } catch (e) {
+                console.error("Error loading results:", e);
+                document.getElementById('loading').innerHTML = `<div style="color:red;">Error loading results: ${e}</div>`;
+            }
+        }
+
+        // Alias for old call
+        async function loadStrategy() {
+            initStrategy();
+        }
+
+        async function reloadData() {
+            loadData();
         }
 
         function switchTab(tabId) {
             // Update buttons
-            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-            event.target.classList.add('active');
+            const tabs = document.querySelectorAll('.tab-btn');
+            tabs.forEach(t => {
+                t.classList.remove('active');
+                if (t.getAttribute('onclick').includes(`'${tabId}'`)) {
+                    t.classList.add('active');
+                }
+            });
 
             // Update sections
-            document.querySelectorAll('.section').forEach(sec => sec.classList.remove('active'));
-            document.getElementById(tabId).classList.add('active');
+            const sections = document.querySelectorAll('.section');
+            sections.forEach(s => s.classList.remove('active'));
 
-            // Re-render plot if switching to scatter to ensure sizing
-            if (tabId === 'scatter' && currentScatterData) {
-                updateScatter();
+            const target = document.getElementById(tabId);
+            if (target) {
+                target.classList.add('active');
+            }
+
+            // Resize plot if needed
+            if (tabId === 'scatter') {
+                setTimeout(() => {
+                    if (window.Plotly) {
+                        Plotly.Plots.resize(document.getElementById('scatterPlot'));
+                    }
+                }, 50);
             }
         }
 
-        function openModal(id1, id2, score, rank, strategy) {
-            const html = `
-                <h2>Pair Detail #${rank}</h2>
-                <div class="pair-card" style="box-shadow:none; border:none; padding:0;">
-                    <div class="pair-header">
-                        <span class="rank-badge">#${rank} Ranking</span>
-                        <span class="score">Score: ${score}</span>
-                    </div>
-                    <div class="comparison">
-                        ${renderItem(id1, strategy)}
-                        ${renderItem(id2, strategy)}
-                    </div>
-                </div>
-            `;
-            modalBody.innerHTML = html;
-            modal.style.display = 'flex';
-        }
-
-        function closeModal(e) {
-            modal.style.display = 'none';
-        }
-
         function renderDashboard(data) {
-            // Stats
-            document.getElementById('strategyName').textContent = data.strategy.toUpperCase();
+            // Update Stats
+            document.getElementById('maxScore').textContent = data.global_max_score !== undefined ? data.global_max_score.toFixed(4) : '-';
+            document.getElementById('minScore').textContent = data.global_min_score !== undefined ? data.global_min_score.toFixed(4) : '-';
+            document.getElementById('totalCount').textContent = data.total_pairs !== undefined ? data.total_pairs : 0;
+            document.getElementById('strategyName').textContent = data.strategy;
 
-            // Data is sorted Descending (Best -> Worst)
-            const allPairs = data.all_pairs; // This is now truncated to Top 100
-            const totalPairs = data.total_pairs; // This is the True Total from backend
-
-            document.getElementById('totalCount').textContent = totalPairs;
-
-            // Use Pre-computed Global Max/Min from backend
-            const maxVal = data.global_max_score !== undefined ? data.global_max_score : (allPairs.length > 0 ? allPairs[0].score : 0);
-            const minVal = data.global_min_score !== undefined ? data.global_min_score : 0;
-
-            document.getElementById('maxScore').textContent = maxVal.toFixed(4);
-            document.getElementById('minScore').textContent = minVal.toFixed(4);
-
-            // Slice Lists
-            const top5 = allPairs.slice(0, 5);
-
-            // Bottom 5 is now provided by backend
-            const bottom5 = data.least_similar || [];
-
-            // Render Lists
-            document.getElementById('most').innerHTML = renderList(top5, data.strategy, "Most Similar", 1, totalPairs);
-            document.getElementById('least').innerHTML = renderList(bottom5, data.strategy, "Least Similar", totalPairs, totalPairs, true);
-
-            // Render Leaderboard Table
-            renderLeaderboard(allPairs, data.strategy);
+            // NO LONGER RENDER CHECKBOXES HERE (we do it in initStrategy)
 
             // Render Scatter
             if (data.points) {
                 currentScatterData = data.points;
                 currentStrategy = data.strategy;
-                // Update Point Count
                 document.getElementById('pointCount').textContent = data.points.length;
+
+                // If scope is global, we might want to say "All" instead of listing datasets?
+                // Or just show loaded count
+                document.getElementById('datasetCount').textContent = data.datasets ? data.datasets.length : 0;
+
+                // Populate GT Outlier Select
+                const gtSelect = document.getElementById('outlierSetSelect');
+                const currentVal = gtSelect.value; // Try to preserve selection
+                gtSelect.innerHTML = '<option value="">None</option>';
+
+                const allKeys = new Set();
+                data.points.forEach(p => {
+                    if (p.gt_outliers) {
+                        Object.keys(p.gt_outliers).forEach(k => allKeys.add(k));
+                    }
+                });
+
+                allKeys.forEach(k => {
+                    const opt = document.createElement('option');
+                    opt.value = k;
+                    opt.textContent = k;
+                    gtSelect.appendChild(opt);
+                });
+
+                if (currentVal && allKeys.has(currentVal)) {
+                    gtSelect.value = currentVal;
+                } else if (allKeys.has('ade_p90')) {
+                    gtSelect.value = 'ade_p90';
+                }
+
+                // Populate Scope Select
+                const scopeSelect = document.getElementById('scopeSelect');
+                const currentScope = scopeSelect.value;
+                scopeSelect.innerHTML = '';
+
+                // Option 1: Global Combined
+                const globalOpt = document.createElement('option');
+                globalOpt.value = 'global';
+                globalOpt.textContent = 'Global Combined';
+                scopeSelect.appendChild(globalOpt);
+
+                // Option 2+: Individual Datasets
+                if (data.datasets && data.datasets.length > 0) {
+                    data.datasets.forEach(d => {
+                        if (d === 'global') return; // Skip if 'global' is somehow in list
+                        const opt = document.createElement('option');
+                        opt.value = d;
+                        opt.textContent = `${d} (Independent)`;
+                        scopeSelect.appendChild(opt);
+                    });
+                }
+
+                // Restore selection if valid, or default to global? 
+                // Or force global if currentScope is 'independent' which no longer exists?
+                if (currentScope && (currentScope === 'global' || (data.datasets && data.datasets.includes(currentScope)))) {
+                    scopeSelect.value = currentScope;
+                } else {
+                    scopeSelect.value = 'global';
+                }
+
                 updateScatter();
+            } else {
+                document.getElementById('scatterPlot').innerHTML = ''; // Clear
+            }
+
+            // Render Lists
+            if (data.all_pairs) {
+                renderList('most', data.all_pairs.slice(0, 5), currentStrategy);
+                const least = data.least_similar || (data.all_pairs.length > 5 ? data.all_pairs.slice(-5).reverse() : []);
+                renderList('least', least, currentStrategy);
+                renderList('leaderboard', data.all_pairs.slice(0, 200), currentStrategy);
+            } else {
+                ['most', 'least', 'leaderboard'].forEach(id => document.getElementById(id).innerHTML = '');
             }
         }
 
-        function renderLeaderboard(pairs, strategy) {
-            const tbody = document.getElementById('leaderboardBody');
-            let html = '';
+        function renderList(containerId, pairs, strategy) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
 
-            pairs.forEach((pair, index) => {
-                const rank = index + 1;
-                const score = pair.score.toFixed(4);
-                const id1 = pair.pair[0];
-                const id2 = pair.pair[1];
+            if (!pairs || pairs.length === 0) {
+                container.innerHTML = '<div style="color:#666; text-align:center; padding:20px;">No pairs found.</div>';
+                return;
+            }
 
-                // Using onclick with quoted strings carefully
-                html += `
-                    <tr onclick="openModal('${id1}', '${id2}', '${score}', ${rank}, '${strategy}')">
-                        <td><span class="rank-badge-sm">#${rank}</span></td>
-                        <td style="font-weight:bold; color: #0066cc;">${score}</td>
-                        <td>${id1} <span style="color:#aaa; margin:0 10px;">vs</span> ${id2}</td>
-                    </tr>
-                `;
-            });
-            tbody.innerHTML = html;
-        }
+            pairs.forEach((item, index) => {
+                const id1 = item.pair[0];
+                const id2 = item.pair[1];
+                const score = item.score.toFixed(4);
 
-        function renderList(pairs, strategy, type, startRank, totalPairs, isReversed = false) {
-            if (!pairs || pairs.length === 0) return '<div class="pair-card">No data available</div>';
+                let rankClass = '';
+                if (index === 0) rankClass = 'rank-1';
+                if (index === 1) rankClass = 'rank-2';
+                if (index === 2) rankClass = 'rank-3';
 
-            let html = '';
-
-            pairs.forEach((pair, index) => {
-                const id1 = pair.pair[0];
-                const id2 = pair.pair[1];
-                const score = pair.score.toFixed(4);
-
-                let rank;
-                if (!isReversed) {
-                    rank = startRank + index;
-                } else {
-                    // This rank calculation is approximate if sliced
-                    rank = totalPairs - index;
-                }
-
-                html += `
-                    <div class="pair-card rank-${rank}">
-                        <div class="pair-header">
-                            <span class="rank-badge">#${rank} Similarity Ranking</span>
-                            <span class="score">Score: ${score}</span>
-                        </div>
-                        <div class="comparison">
-                            ${renderItem(id1, strategy)}
-                            ${renderItem(id2, strategy)}
+                const div = document.createElement('div');
+                div.className = `pair-card ${rankClass}`;
+                div.innerHTML = `
+                    <div class="pair-header">
+                        <div>
+                            <span class="rank-badge">#${index + 1}</span>
+                            <span style="font-weight:bold; margin-left:10px;">Similarity:</span>
+                            <span class="score">${score}</span>
+                            <span style="margin-left:10px; font-size:0.9em; color:#666;">(${item.dataset})</span>
                         </div>
                     </div>
-                `;
-            });
+                    <div class="comparison">
+                        <div class="item">
+                            ${renderItem(id1, strategy, item.dataset, true)}
+                        </div>
+                        <div class="item">
+                             ${renderItem(id2, strategy, item.dataset, true)}
+                        </div>
+                    </div>
+                 `;
+                container.appendChild(div);
 
-            return html;
+                // Trigger debug load (lazy or immediate?)
+                // Immediate for top 5 lists
+                loadDebugText(id1, strategy, item.dataset);
+                loadDebugText(id2, strategy, item.dataset);
+            });
         }
 
-        function renderItem(id, strategy) {
-            // Unique ID for the text container
-            const textId = `text-${id}-${Math.floor(Math.random() * 1000)}`;
-
-            setTimeout(() => {
-                fetch(`/debug/text/${strategy}/${id}`)
-                    .then(r => {
-                        if (r.ok) return r.text();
-                        return null;
-                    })
-                    .then(text => {
-                        if (text) {
-                            const el = document.getElementById(textId);
-                            if (el) {
-                                el.textContent = text;
-                                el.style.display = 'block';
-                            }
-                        }
-                    });
-            }, 100);
+        function renderItem(id, strategy, dataset, showDebug = false) {
+            let debugHtml = '';
+            // Only show debug if explicitly requested and dataset is known
+            if (showDebug && dataset) {
+                const debugImgUrl = `/debug/${strategy}/${dataset}/${id}`;
+                debugHtml = `
+                    <div style="margin-top:10px; text-align:left;">
+                        <div class="label" style="font-size:0.8em; margin-bottom:2px;">Debug View</div>
+                        <img src="${debugImgUrl}" 
+                             onerror="this.style.display='none'" 
+                             style="width:100%; border:1px solid #eee; border-radius:4px; display:block; margin-bottom:5px;">
+                        
+                        <div id="debug-text-${id}" 
+                             style="font-family:monospace; font-size:0.85em; background:#f8f9fa; color:#333; padding:8px; border-radius:4px; border:1px solid #eee; white-space:pre-wrap; display:none; max-height:300px; overflow-y:auto;"></div>
+                    </div>
+                `;
+            }
 
             return `
-                <div class="item">
-                    <div class="label">${id}</div>
-                    <div class="media-container">
-                        <div class="debug-label" style="top:5px; left:5px;">Video</div>
-                        <video src="/video/${id}" autoplay loop muted playsinline></video>
-                        
-                        <div style="position:relative;">
-                            <img src="/debug/${strategy}/${id}" alt="Debug View">
-                            <div class="debug-label" style="bottom:5px; left:5px; top:auto;">Debug Input</div>
-                            
-                            <!-- Text Overlay -->
-                            <div id="${textId}" class="text-overlay" style="display:none;"></div>
-                        </div>
-                    </div>
+                <div class="media-container">
+                    <video controls loop muted playsinline preload="metadata">
+                        <source src="/video/${id}" type="video/mp4">
+                        Video not found
+                    </video>
                 </div>
+                <div style="margin-top:5px; font-family:monospace; font-size:0.9em;">
+                    ${id}
+                </div>
+                ${debugHtml}
             `;
         }
+
+
         function updateScatter() {
             if (!currentScatterData) return;
 
             const method = document.getElementById('projectionSelect').value;
-            const colorMode = document.getElementById('colorSelect').value;
-            const points = currentScatterData;
+            const colorSelect = document.getElementById('colorBySelect') || document.getElementById('colorSelect');
+            const colorBy = colorSelect ? colorSelect.value : 'dataset';
+            const gtSet = document.getElementById('outlierSetSelect').value;
+            const scopeSelect = document.getElementById('scopeSelect');
+            const scope = scopeSelect ? scopeSelect.value : 'global';
 
-            // Check if method exists (fallback to t-SNE or PCA if missing)
-            let useMethod = method;
-            if (points.length > 0 && !points[0][method]) {
-                if (points[0]['tsne']) useMethod = 'tsne';
-                else if (points[0]['pca']) useMethod = 'pca';
+            // Filter points based on scope
+            let points = [];
+            if (scope === 'global') {
+                points = currentScatterData; // Show all
+            } else {
+                // Specific dataset selected
+                points = currentScatterData.filter(p => p.dataset === scope);
             }
 
             // Determine Colors
             let colors = [];
             let opacity = 0.8;
-            let showLegend = false;
 
-            if (colorMode === 'outlier') {
-                colors = points.map(p => p.is_outlier ? '#ff0000' : '#0066cc'); // Red if outlier
-            } else if (colorMode.startsWith('cluster_')) {
-                // Generate categorical colors
-                // Using a simple list of colors or Plotly's default cycle
-                const palette = [
-                    '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
-                    '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'
-                ];
-                colors = points.map(p => {
-                    const k = p[colorMode];
+            // Collect datasets for discrete color mapping
+            const datasetSet = new Set();
+            points.forEach(p => datasetSet.add(p.dataset));
+            const distinctDatasets = Array.from(datasetSet).sort();
+            const datasetColorMap = {};
+            const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
+            distinctDatasets.forEach((d, i) => {
+                datasetColorMap[d] = palette[i % palette.length];
+            });
+
+            colors = points.map(p => {
+                let projSource = p.projections_independent;
+                if (scope === 'global' && p.projections_global) {
+                    projSource = p.projections_global;
+                }
+                if (!projSource) projSource = p.projections || {};
+
+                const proj = projSource[method] || {};
+
+                if (colorBy === 'outlier') {
+                    return proj.is_outlier ? '#ff0000' : '#0066cc';
+                } else if (colorBy.startsWith('cluster_')) {
+                    const k = proj[colorBy] !== undefined ? proj[colorBy] : 0;
                     return palette[k % palette.length];
-                });
-            } else {
-                colors = '#0066cc';
-            }
+                } else if (colorBy === 'dataset') {
+                    return datasetColorMap[p.dataset] || '#0066cc';
+                } else {
+                    return '#0066cc';
+                }
+            });
+
+            // Determine sizes / lines based on GT Outlier
+            const pointSizes = [];
+            const lineColors = [];
+            const lineWidths = [];
+
+            points.forEach(p => {
+                let isGt = false;
+                if (gtSet && p.gt_outliers && p.gt_outliers[gtSet]) {
+                    isGt = true;
+                }
+                pointSizes.push(12);
+                lineColors.push(isGt ? '#ff8c00' : 'rgba(0,0,0,0)');
+                lineWidths.push(isGt ? 3 : 0);
+            });
+
+            // Build Traces
+            const x = [];
+            const y = [];
+            const text = []; // Need to rebuild text since we filtered
+            const ids = [];
+
+            points.forEach(p => {
+                let projSource = p.projections_independent;
+                if (scope === 'global' && p.projections_global) {
+                    projSource = p.projections_global;
+                }
+                if (!projSource) {
+                    if (p.projections) projSource = p.projections;
+                }
+
+                const proj = projSource ? projSource[method] : null;
+
+                if (proj) {
+                    x.push(proj.x);
+                    y.push(proj.y);
+                    text.push(`${p.id}<br>Dataset: ${p.dataset || 'N/A'}`);
+                    ids.push(p.id);
+                } else {
+                    x.push(0);
+                    y.push(0);
+                    text.push(`${p.id} (No Proj)`);
+                    ids.push(p.id);
+                }
+            });
 
             const trace = {
-                x: points.map(p => p[useMethod] ? p[useMethod][0] : 0),
-                y: points.map(p => p[useMethod] ? p[useMethod][1] : 0),
+                x: x,
+                y: y,
                 mode: 'markers',
                 type: 'scatter',
-                text: points.map(p => p.id),
+                text: text,
                 marker: {
-                    size: 12,
+                    size: pointSizes,
                     color: colors,
                     opacity: opacity,
                     line: {
-                        color: points.map(p => p.is_accel_outlier ? '#ff8c00' : 'rgba(0,0,0,0)'), // Dark Orange if outlier
-                        width: points.map(p => p.is_accel_outlier ? 3 : 0)
+                        color: lineColors,
+                        width: lineWidths
                     }
                 },
-                hoverinfo: 'text'
+                hoverinfo: 'text',
+                hoverlabel: {
+                    bgcolor: colors,
+                    bordercolor: lineColors
+                }
             };
 
+            const titleScope = scope === 'global' ? 'Global Combined' : `${scope} (Independent)`;
+
             const layout = {
-                title: `${useMethod.toUpperCase()} Embedding Space (N=${points.length})`,
+                title: `${method.toUpperCase()} Space: ${titleScope}`,
                 hovermode: 'closest',
                 dragmode: 'pan',
                 xaxis: { title: 'Dimension 1', zeroline: false },
@@ -732,19 +907,42 @@
 
             document.getElementById('scatterPlot').on('plotly_click', function (data) {
                 const pt = data.points[0];
-                const id = pt.text;
+                const index = pt.pointIndex;
+                const pointData = points[index]; // Use local filtered points list!
+                const id = pointData.id;
 
                 // Show detail
                 const detailDiv = document.getElementById('scatterDetail');
                 detailDiv.innerHTML = `
-                    <h3>Selected: ${id}</h3>
+                    <h3>Selected: ${id} <span style="font-size:0.6em; color:#666;">(${pointData.dataset})</span></h3>
                     <div style="background:white; padding:20px; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.1);">
-                        ${renderItem(id, currentStrategy)}
+                        ${renderItem(id, currentStrategy, pointData.dataset, true)}
                     </div>
                 `;
                 // Scroll to detail
                 detailDiv.scrollIntoView({ behavior: 'smooth' });
+
+                // Load debug text
+                loadDebugText(id, currentStrategy, pointData.dataset);
             });
+        }
+
+        async function loadDebugText(id, strategy, dataset) {
+            const container = document.getElementById(`debug-text-${id}`);
+            if (!container) return;
+
+            try {
+                const response = await fetch(`/debug_text/${strategy}/${dataset}/${id}`);
+                if (response.ok) {
+                    const text = await response.text();
+                    if (text && text.trim().length > 0) {
+                        container.textContent = text;
+                        container.style.display = 'block';
+                    }
+                }
+            } catch (e) {
+                console.error("Error loading debug text", e);
+            }
         }
     </script>
 </body>

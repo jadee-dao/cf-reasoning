@@ -19,46 +19,36 @@ def get_device():
 
 # ... (Naive, Foreground, TextDescription classes remain unchanged) ...
 
-class TextDescriptionStrategy(EmbeddingStrategy):
-    # ... (code for TextDescriptionStrategy) ...
-    def generate_embedding(self, image_path: str, **kwargs) -> np.array:
-        # ... (implementation as fixed previously) ...
-        return self.model.encode(description)
-
-
-
-
-class VideoXClipStrategy(EmbeddingStrategy):
+class VideoMAEStrategy(EmbeddingStrategy):
     """
-    Uses X-CLIP to embed the entire video clip by sampling 8 frames.
-    Captures both visual semantics and temporal dynamics.
+    Uses VideoMAE (videomae-base) to embed video clips.
+    Samples 16 frames and computes the mean of the encoder outputs.
     """
     def load_model(self):
         if not self.model_loaded:
-            model_name = "microsoft/xclip-base-patch32"
-            print(f"Loading X-CLIP model: {model_name}...")
+            model_name = "MCG-NJU/videomae-base"
+            print(f"Loading VideoMAE model: {model_name}...")
+            
+            from transformers import VideoMAEImageProcessor, VideoMAEModel
+            
             self.device = get_device()
-            self.processor = AutoProcessor.from_pretrained(model_name)
-            self.model = AutoModel.from_pretrained(model_name).to(self.device)
+            self.processor = VideoMAEImageProcessor.from_pretrained(model_name)
+            self.model = VideoMAEModel.from_pretrained(model_name).to(self.device)
             self.model_loaded = True
 
     def generate_embedding(self, image_path: str, **kwargs) -> np.array:
         self.load_model()
         
-        # We need the video path. 
-        # If not provided in kwargs, try to infer it (hacky fallback), but run_embedding_test should provide it.
         video_path = kwargs.get("video_path")
         if not video_path:
-            # Fallback: assuming image_path is like ".../temp_frame_ID.jpg" and video is ID.mp4? 
-            # Ideally this shouldn't happen if we update the main script.
-            raise ValueError("Video path not provided for Video Strategy")
+            raise ValueError("Video path not provided for VideoMAE Strategy")
 
-        # 1. Sample 8 Frames
+        # 1. Sample 16 Frames (VideoMAE default)
         cap = cv2.VideoCapture(video_path)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        # uniform sampling
-        indices = np.linspace(0, total_frames-1, 8).astype(int)
+        # Uniform sampling of 16 frames
+        indices = np.linspace(0, total_frames-1, 16).astype(int)
         
         frames = []
         for idx in indices:
@@ -67,7 +57,6 @@ class VideoXClipStrategy(EmbeddingStrategy):
             if ret:
                 frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             else:
-                # Pad with last frame or black if fail
                 if frames:
                     frames.append(frames[-1])
                 else:
@@ -76,69 +65,32 @@ class VideoXClipStrategy(EmbeddingStrategy):
         
         # 2. Prepare Debug Filmstrip
         if "debug_output_path" in kwargs:
-            # Create a 2x4 grid or 1x8 strip
-            # Let's do 1x8 strip
-            # frames[0] might be big. Resize to height 224 for strip?
-            target_h = 224
+            target_h = 100
             scale = target_h / frames[0].shape[0]
             target_w = int(frames[0].shape[1] * scale)
             
-            resized_frames = [cv2.resize(f, (target_w, target_h)) for f in frames]
+            # Show every other frame for compactness (8 frames)
+            resized_frames = [cv2.resize(f, (target_w, target_h)) for f in frames[::2]]
             filmstrip = np.concatenate(resized_frames, axis=1)
-            
-            # Save
-            # Convert to BGR for cv2 save or use PIL
             Image.fromarray(filmstrip).save(kwargs["debug_output_path"])
 
         # 3. Generate Embedding
-        # X-CLIP expects video pixel values. Processor handles it.
-        inputs = self.processor(videos=list(frames), return_tensors="pt").to(self.device)
+        # VideoMAE expects list of frames
+        inputs = self.processor(list(frames), return_tensors="pt").to(self.device)
+        
         with torch.no_grad():
-            video_features = self.model.get_video_features(**inputs)
+            outputs = self.model(**inputs)
+            
+        # Use mean of last hidden state as embedding
+        # [Batch, Sequence, Dim] -> [1, 1568, 768] for base model
+        last_hidden_state = outputs.last_hidden_state
+        embedding = torch.mean(last_hidden_state, dim=1)
             
         # Normalize
-        video_features = video_features / video_features.norm(p=2, dim=-1, keepdim=True)
-        return video_features.cpu().numpy().flatten()
+        embedding = embedding / embedding.norm(p=2, dim=-1, keepdim=True)
+        return embedding.cpu().numpy().flatten()
 
-class VLMCaptionStrategy(EmbeddingStrategy):
-    """
-    Uses a VLM (BLIP) to generate a natural language caption for the image,
-    then embeds that caption using SBERT.
-    """
-    def load_model(self):
-        if not self.model_loaded:
-            print(f"Loading SBERT model: {SBERT_MODEL_NAME}...")
-            self.sbert = SentenceTransformer(SBERT_MODEL_NAME)
-            
-            print(f"Loading BLIP model: {BLIP_MODEL_NAME}...")
-            self.device = get_device()
-            self.processor = BlipProcessor.from_pretrained(BLIP_MODEL_NAME)
-            self.model = BlipForConditionalGeneration.from_pretrained(BLIP_MODEL_NAME).to(self.device)
-            self.model_loaded = True
 
-    def generate_embedding(self, image_path: str, **kwargs) -> np.array:
-        self.load_model()
-        image = Image.open(image_path).convert("RGB")
-        
-        # 1. Generate Caption
-        inputs = self.processor(image, return_tensors="pt").to(self.device)
-        
-        # Generate with slightly tweaked parameters for better description
-        out = self.model.generate(**inputs, max_new_tokens=50)
-        caption = self.processor.decode(out[0], skip_special_tokens=True)
-        
-        # 2. Save Debug Info
-        if "debug_output_path" in kwargs:
-            # For VLM, the "debug image" is just the original image, 
-            # but we definitely want to save the text.
-            image.save(kwargs["debug_output_path"])
-            
-            txt_path = kwargs["debug_output_path"].replace(".jpg", ".txt")
-            with open(txt_path, "w") as f:
-                f.write(caption)
-
-        # 3. Embed Caption
-        return self.sbert.encode(caption)
 
 class NaiveStrategy(EmbeddingStrategy):
     """
@@ -147,9 +99,9 @@ class NaiveStrategy(EmbeddingStrategy):
     def load_model(self):
         if not self.model_loaded:
             print(f"Loading SigLIP model: {SIGLIP_MODEL_NAME}...")
-            self.device = get_device()
+            # Use device_map="auto" to handle OOM gracefully (requires accelerate)
             self.processor = AutoProcessor.from_pretrained(SIGLIP_MODEL_NAME)
-            self.model = AutoModel.from_pretrained(SIGLIP_MODEL_NAME).to(self.device)
+            self.model = AutoModel.from_pretrained(SIGLIP_MODEL_NAME, device_map="auto")
             self.model_loaded = True
             
     def generate_embedding(self, image_path: str, **kwargs) -> np.array:
@@ -159,7 +111,8 @@ class NaiveStrategy(EmbeddingStrategy):
         if "debug_output_path" in kwargs:
             image.save(kwargs["debug_output_path"])
             
-        inputs = self.processor(images=image, return_tensors="pt").to(self.device)
+        # Move inputs to the same device as the model
+        inputs = self.processor(images=image, return_tensors="pt").to(self.model.device)
         
         with torch.no_grad():
             image_features = self.model.get_image_features(**inputs)
@@ -275,82 +228,7 @@ class ForegroundLooseStrategy(EmbeddingStrategy):
         return image_features.cpu().numpy().flatten()
 
 
-class TextDescriptionStrategy(EmbeddingStrategy):
-    """
-    Uses YOLO to detect objects and their positions, templates a descriptive sentence,
-    and computes the text embedding using SBERT.
-    """
-    def load_model(self):
-        if not self.model_loaded:
-            print(f"Loading SBERT model: {SBERT_MODEL_NAME}...")
-            self.model = SentenceTransformer(SBERT_MODEL_NAME)
-            
-            print(f"Loading YOLO Detection model: {YOLO_MODEL_PATH}...")
-            self.det_model = YOLO("yolo11n.pt")
-            self.model_loaded = True
 
-    def generate_embedding(self, image_path: str, **kwargs) -> np.array:
-        self.load_model()
-        
-        # 1. Run Object Detection
-        results = self.det_model(image_path, verbose=False)
-        result = results[0]
-        
-        width = result.orig_shape[1]
-        
-        # 2. Bin objects spatially
-        left_objs = []
-        center_objs = []
-        right_objs = []
-        
-        # Define thresholds for Left/Center/Right (33% split)
-        thr1 = width / 3
-        thr2 = 2 * width / 3
-        
-        if result.boxes is not None:
-            for box in result.boxes:
-                cls_id = int(box.cls[0])
-                label = result.names[cls_id]
-                cx = (box.xyxy[0][0] + box.xyxy[0][2]) / 2
-                
-                if cx < thr1:
-                    left_objs.append(label)
-                elif cx < thr2:
-                    center_objs.append(label)
-                else:
-                    right_objs.append(label)
-        
-        # 3. Helper to format list: "2 cars, 1 person"
-        def format_counts(obj_list):
-            if not obj_list:
-                return "empty"
-            counts = {}
-            for obj in obj_list:
-                counts[obj] = counts.get(obj, 0) + 1
-            return ", ".join([f"{c} {o}{'s' if c>1 else ''}" for o, c in counts.items()])
-            
-        left_str = format_counts(left_objs)
-        center_str = format_counts(center_objs)
-        right_str = format_counts(right_objs)
-        
-        # 4. Template String
-        description = f"A driving scene. Left: {left_str}. Center: {center_str}. Right: {right_str}."
-        
-        # 5. Save Debug Info
-        if "debug_output_path" in kwargs:
-            # Save annotated image for text strategy
-            res_plotted = result.plot()
-            cv2.imwrite(kwargs["debug_output_path"], res_plotted)
-            
-            # Save the exact text description used
-            txt_path = kwargs["debug_output_path"].replace(".jpg", ".txt")
-            with open(txt_path, "w") as f:
-                f.write(description)
-        
-        # 6. Generate Embedding
-        # SBERT encode expects a list or string
-        embedding = self.model.encode(description)
-        return embedding
 
 
 class ObjectSemanticsStrategy(EmbeddingStrategy):
@@ -585,135 +463,92 @@ class FastViTAttentionStrategy(EmbeddingStrategy):
         return embedding.cpu().numpy().flatten()
 
 
-class FastVLMDescriptionStrategy(EmbeddingStrategy):
-    """
-    Prompts FastVLM to describe the scene in a structured format, 
-    then embeds the generated text using SBERT.
-    """
-    IMAGE_TOKEN_INDEX = -200
 
-    def __init__(self, prompt_text=None):
-        super().__init__()
-        self.model = None
-        self.tokenizer = None
-        self.sbert = None
-        self.model_loaded = False
-        self.device = get_device()
-        self.device = get_device()
-        self.prompt_text = prompt_text or SCENE_DESCRIPTION_PROMPT
-
-    def get_config_name(self):
-        return "fastvlm_1.5b_description"
-
-    def load_model(self):
-        if not self.model_loaded:
-            # 1. Load SBERT
-            print(f"Loading SBERT model: {SBERT_MODEL_NAME}...")
-            self.sbert = SentenceTransformer(SBERT_MODEL_NAME)
-            
-            # 2. Load FastVLM
-            model_id = "apple/FastVLM-1.5B"
-            print(f"Loading FastVLM model: {model_id}...")
-            
-            from transformers import AutoModelForCausalLM, AutoTokenizer
-            
-            try:
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    model_id, 
-                    trust_remote_code=True,
-                    torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
-                    device_map="auto"
-                )
-                self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-                self.model_loaded = True
-            except Exception as e:
-                print(f"Error loading FastVLM: {e}")
-                raise e
-
-    def generate_embedding(self, image_path: str, **kwargs) -> np.array:
-        self.load_model()
-        
-        # 1. Load Image (Handle Video)
-        if image_path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
-             # Extract first frame
-             cap = cv2.VideoCapture(image_path)
-             ret, frame = cap.read()
-             cap.release()
-             if ret:
-                 pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-             else:
-                 raise ValueError(f"Could not read first frame from video: {image_path}")
-        else:
-             pil_image = Image.open(image_path).convert("RGB")
-        
-        # 2. Construct Prompt (Standard HF Usage)
-        messages = [
-            {"role": "user", "content": "<image>\n" + self.prompt_text}
-        ]
-        
-        rendered = self.tokenizer.apply_chat_template(
-            messages, add_generation_prompt=True, tokenize=False
-        )
-        
-        # 3. Tokenize and Splice Image Token
-        pre, post = rendered.split("<image>", 1)
-        
-        # Tokenize text around the image token
-        pre_ids = self.tokenizer(pre, return_tensors="pt", add_special_tokens=False).input_ids
-        post_ids = self.tokenizer(post, return_tensors="pt", add_special_tokens=False).input_ids
-        
-        # Splice in the IMAGE token id 
-        img_tok = torch.tensor([[self.IMAGE_TOKEN_INDEX]], dtype=pre_ids.dtype)
-        
-        input_ids = torch.cat([pre_ids, img_tok, post_ids], dim=1).to(self.model.device)
-        attention_mask = torch.ones_like(input_ids, device=self.model.device)
-        
-        # 4. Preprocess Image
-        # Use the logic proven to work with this model (generating 'pixel_values' specifically)
-        # Note: We rely on the model's image processor to handle resizing.
-        # HF 'images' arg in generate usually expects pixel_values if processed, or raw images if processor is handled internally
-        # But FastVLM code snippet uses 'images=px' where px is pixel_values.
-        px = self.model.get_vision_tower().image_processor(images=pil_image, return_tensors="pt")["pixel_values"]
-        px = px.to(self.model.device, dtype=self.model.dtype)
-        
-        # 5. Generate
-        with torch.no_grad():
-            out = self.model.generate(
-                inputs=input_ids,
-                attention_mask=attention_mask,
-                images=px,
-                max_new_tokens=200,
-            )
-        
-        generated_ids = out[0][input_ids.shape[1]:]
-        description = self.tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
-
-        print(f"\n[FastVLM Description]:\n{description}\n")
-
-        # 6. Save Debug Info
-        if "debug_output_path" in kwargs:
-            txt_path = kwargs["debug_output_path"].replace(".jpg", ".txt")
-            with open(txt_path, "w") as f:
-                f.write(description)
-                
-            # Copy image for reference
-            pil_image.save(kwargs["debug_output_path"])
-
-        # 7. Embed with SBERT
-        return self.sbert.encode(description)
-
-class FastVLMHazardStrategy(FastVLMDescriptionStrategy):
-    def __init__(self):
-        super().__init__(prompt_text=HAZARD_IDENTIFICATION_PROMPT)
-
-    def get_config_name(self):
-        return "fastvlm_1.5b_hazard"
 
 # --- OpenRouter Strategies ---
 
 import requests
 import base64
 import os
+
+
+class ViViTStrategy(EmbeddingStrategy):
+    """
+    Uses ViViT (Video Vision Transformer) to embed video clips.
+    Model: google/vivit-b-16x2-kinetics400
+    Native video processing without masking.
+    """
+    def load_model(self):
+        if not self.model_loaded:
+            model_name = "google/vivit-b-16x2-kinetics400"
+            print(f"Loading ViViT model: {model_name}...")
+            
+            from transformers import VivitImageProcessor, VivitModel
+            
+            self.device = get_device()
+            self.processor = VivitImageProcessor.from_pretrained(model_name)
+            self.model = VivitModel.from_pretrained(model_name).to(self.device)
+            self.model_loaded = True
+
+    def generate_embedding(self, image_path: str, **kwargs) -> np.array:
+        self.load_model()
+        
+        video_path = kwargs.get("video_path")
+        if not video_path:
+            raise ValueError("Video path not provided for ViViT Strategy")
+
+        # 1. Sample Frames (ViViT expects 32 frames by default usually)
+        # The specific model 'google/vivit-b-16x2-kinetics400' typically expects 32 frames.
+        # We will sample 32 frames.
+        
+        cap = cv2.VideoCapture(video_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames <= 0:
+             # Fallback
+             total_frames = 32
+        
+        # Uniform sampling of 32 frames
+        indices = np.linspace(0, total_frames-1, 32).astype(int)
+        
+        frames = []
+        for idx in indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if ret:
+                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            else:
+                if frames:
+                    frames.append(frames[-1])
+                else:
+                    frames.append(np.zeros((224, 224, 3), dtype=np.uint8))
+        cap.release()
+        
+        # 2. Prepare Debug Filmstrip (Optional, same as VideoMAE)
+        if "debug_output_path" in kwargs:
+            target_h = 100
+            scale = target_h / frames[0].shape[0]
+            target_w = int(frames[0].shape[1] * scale)
+            
+            # Show every 4th frame for compactness (8 frames)
+            resized_frames = [cv2.resize(f, (target_w, target_h)) for f in frames[::4]]
+            filmstrip = np.concatenate(resized_frames, axis=1)
+            Image.fromarray(filmstrip).save(kwargs["debug_output_path"])
+
+        # 3. Generate Embedding
+        # VivitProcessor expects list of frames
+        inputs = self.processor(list(frames), return_tensors="pt").to(self.device)
+        
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            
+        # Use pooler_output (CLS token embedding)
+        # Shape: [Batch, Hidden] -> [1, 768]
+        embedding = outputs.pooler_output[0]
+            
+        # Normalize
+        embedding = embedding / embedding.norm(p=2, dim=-1, keepdim=True)
+        return embedding.cpu().numpy().flatten()
+
 
 class OpenRouterDescriptionStrategy(EmbeddingStrategy):
     """

@@ -4,21 +4,17 @@ This project explores various **embedding strategies** for analyzing autonomous 
 
 ## Features
 
-- **7 Embedding Strategies:**
-    1.  **Naive (SigLIP):** Encodes the entire image directly.
+- **10 Embedding Strategies:**
+    1.  **Naive (SigLIP):** Encodes the entire image directly using SigLIP.
     2.  **Foreground Strict:** High-confidence YOLO foreground segmentation (isolates obvious objects).
     3.  **Foreground Loose:** Low-confidence segmentation with dilation (includes context).
-    4.  **Text (Spatial):** Template-based description ("Cars on left, Pedestrian in center").
-    5.  **VLM (BLIP):** Generates a natural language caption for the entire scene.
-    6.  **Video (X-CLIP):** Embeds the full video clip by processing 8 temporal frames.
-    7.  **Object Semantics:** "Bag of Objects" approach – detects objects, individually captions them, and aggregates into a detailed text description.
-    8.  **ViT Attention:** Use ViT attention weights to mask image (e.g. threshold at 0.35) for a vision embedding. This currently implements FASTViT, but can be extended to any ViT model.
-    9.  **VLM Description:** Uses a lightweight VLM to generate a description of the scene in a given image.
-    10. **VLM Hazard:** Uses a lightweight VLM to generate a focused description on the hazards and uncertainties of the scene in a given image.
-    11. **OpenRouter Description:** Uses external VLMs (via OpenRouter) to describe the scene (ex. `nvidia/nemotron-nano-12b-v2-vl:free`).
-    12. **OpenRouter Hazard:** Uses external VLMs (via OpenRouter) to focus on hazards and safety-critical events (ex. `nvidia/nemotron-nano-12b-v2-vl:free`).
-    13. **OpenRouter Storyboard:** Samples 4 frames from the video, creates a 2x2 grid, and analyzes the sequence for temporal understanding using an external VLM (ex. `nvidia/nemotron-nano-12b-v2-vl:free`).
-
+    4.  **Video (VideoMAE):** Embeds the full video clip by processing 16 sampled frames using VideoMAE.
+    5.  **Video (ViViT):** Embeds the full video clip using Video Vision Transformer (ViViT).
+    6.  **Object Semantics:** "Bag of Objects" approach – detects objects (YOLO), individually captions them (BLIP), and aggregates into a detailed text description (SBERT).
+    7.  **FastViT Attention:** Uses FastViT attention weights to mask the image, focusing on important regions before embedding.
+    8.  **OpenRouter Description:** Uses external VLMs (via OpenRouter, e.g., `nvidia/nemotron-nano-12b-v2-vl:free`) to generate a detailed scene description.
+    9.  **OpenRouter Hazard:** Uses external VLMs to focus strictly on hazards and safety-critical events.
+    10. **OpenRouter Storyboard:** Samples 4 frames to create a 2x2 storyboard grid and analyzes the temporal sequence using an external VLM.
 
 - **Browser-Based Viewer:**
     - Visualizes similarity search results.
@@ -35,8 +31,8 @@ cd scripts
 pip install torch transformers sentence-transformers ultralytics flask opencv-python scikit-learn matplotlib pandas umap-learn dotenv
 ```
 
-Download a subset of the PhysicalAI Autonomous Vehicles dataset
-```
+Download a subset of the PhysicalAI Autonomous Vehicles dataset:
+```bash
 mkdir -p nvidia_dataset_demo && wget "https://huggingface.co/datasets/nvidia/PhysicalAI-Autonomous-Vehicles/resolve/main/camera/camera_front_wide_120fov/camera_front_wide_120fov.chunk_0000.zip" -O nvidia_dataset_demo/dataset.zip
 unzip -q nvidia_dataset_demo/camera/camera_front_wide_120fov/camera_front_wide_120fov.chunk_0000.zip -d
 ```
@@ -46,48 +42,54 @@ This should create a folder in `nvidia_dataset_demo/extracted_data`.
 
 To use the **OpenRouter** strategies (and access external VLMs like GPT-4o, Claude 3.5, or NVIDIA Nemotron), you must set up your API key.
 
-1.  Create a `.env` file in the project root:
+1.  Create a `.env` file in the `nvidia_dataset_demo/scripts` directory (or project root, depending on execution context):
     ```bash
-    touch .env
+    touch scripts/.env
     ```
 2.  Add your OpenRouter API key and Model Name:
     ```bash
     OPENROUTER_API_KEY=sk-or-v1-...
     OPENROUTER_MODEL=nvidia/nemotron-nano-12b-v2-vl:free # default
     ```
-    > **Note:** These strategies communicate with the [OpenRouter API](https://openrouter.ai). You can use any model available on OpenRouter by changing the `OPENROUTER_MODEL` variable (e.g. `openai/gpt-4o`, `anthropic/claude-3.5-sonnet:beta`, etc.).
+    > **Note:** These strategies communicate with the [OpenRouter API](https://openrouter.ai). You can use any model available on OpenRouter by changing the `OPENROUTER_MODEL` variable.
 
 ## Usage
 
+The project uses a pipeline script to process data, generate embeddings, and compute projections.
 
-### 1. Generate Embeddings & Run Analysis
+### 1. Run the Pipeline
 
-Run the analysis script to process data, generate results, and calculate multi-dimensional projections (PCA, t-SNE, UMAP) for visualization:
+The easiest way to run an analysis is using `run_pipeline.sh`:
 
 ```bash
 cd scripts
-python3 run_embedding_test.py --strategy [STRATEGY_NAME] --limit 10
+./run_pipeline.sh --dataset nvidia_demo --strategy [STRATEGY_NAME] --limit 10
 ```
 
-**Output:**
-*   `analysis_results/results_[strategy].json` (Contains rankings & 2D coordinates for viewer)
-*   `analysis_results/projections_[strategy].csv` (Contains 5D coordinates for external analysis)
+**Arguments:**
+- `--dataset`: Name of the dataset (default: `nvidia_demo`).
+- `--strategy`: The embedding strategy to use (see list below).
+- `--limit`: (Optional) Limit the number of samples to process (useful for testing).
 
-**Available Strategies:**
+**Available Strategy Names:**
 - `naive`
 - `foreground_strict`
 - `foreground_loose`
-- `text`
-- `vlm`
-- `video`
+- `video_mae`
+- `video_vit`
 - `object_semantics`
 - `fastvit_attention`
-- `fastvlm_description`
-- `fastvlm_hazard`
 - `openrouter_description`
 - `openrouter_hazard`
 - `openrouter_storyboard`
 
+**Manual Steps (Alternative):**
+If you prefer to run steps individually:
+1.  **Process Dataset:** `python3 process_dataset.py --dataset_name nvidia_demo --limit 10`
+2.  **Run Strategy:** `python3 run_strategy.py --strategy naive --dataset nvidia_demo`
+3.  **Compute Projections:** `python3 compute_projections.py --dataset nvidia_demo --strategy naive`
+
+***
 
 ### 2. Launch the Viewer
 
@@ -100,67 +102,30 @@ python3 viewer_app.py
 
 Open **http://localhost:8080** in your browser.
 
-
 ## Viewer Interface
 
 The browser-based viewer (`viewer_app.py`) provides a rich interface for interacting with the analysis results.
 
 ### Key Features:
-1.  **Strategy Selection:**  The dropdown menu allows you to switch between different `results_*.json` files (e.g., VLM, Object Semantics, Naive) instantly.
-2.  **Statistics Bar:** Displays the highest/lowest similarity scores and total pairs analyzed for the current strategy.
+1.  **Strategy Selection:**  The dropdown menu allows you to switch between different `results_*.json` files instantly.
+2.  **Statistics Bar:** Displays the highest/lowest similarity scores and total pairs analyzed.
 3.  **Similarity Ranking:**
-    *   **Top 5 Most Similar:** Shows pairs with high cosine similarity (visually or semantically close).
-    *   **Top 5 Least Similar:** Shows pairs that are distinct.
-    *   **Leaderboard:** A sortable table of all pairs.
-    *   **Embedding Space:** Interactive scatter plot of all samples.
-        *   Switch between **t-SNE**, **UMAP**, and **PCA** projections.
-        *   Click comments to see the corresponding video and debug view.
+    -   **Top 5 Most Similar:** Shows pairs with high cosine similarity.
+    -   **Top 5 Least Similar:** Shows distinct pairs.
+    -   **Leaderboard:** A sortable table of all pairs.
+    -   **Embedding Space:** Interactive scatter plot (t-SNE/UMAP/PCA).
 4.  **Debug Inputs:**
-    *   Clicking on a pair opens a **Detail Modal**.
-    *   This shows the **Side-by-Side Videos** (autoplay).
-    *   **Debug Image/Text:** Shows exactly what the model "saw".
-        *   *Naive:* Original Image.
-        *   *Foreground:* Masked Foreground (black background).
-        *   *VLM/Text:* Text Overlay of the generated caption.
-        *   *Video:* Filmstrip of sampled frames.
-        *   *Object Semantics:* Detailed object inventory list.
-        *   *ViT Attention:* Mask image based on attention weights.
-        *   *VLM Description:* Embedding of VLM-generated scene description.
-
-        *   *VLM Hazard:* Embedding of VLM-generated hazards/uncertainties description.
-        *   *OpenRouter Strategies:* Text description returned by the API.
-        *   *Storyboard:* 2x2 grid image of sampled frames used for temporal analysis.
-
-### 3. Similarity vs. Acceleration Outlier Analysis
-
-This module correlates dips in frame-to-frame embedding similarity with "Acceleration Outlier" events (sudden stops/starts).
-
-**Run Analysis:**
-```bash
-python3 scripts/analyze_embedding_similarity.py [--regenerate]
-```
--   **Features**:
-    -   Compare 6+ strategies simultaneously (Native, Foreground, YOLO-Text, BLIP, Hazard, ViT-Attn).
-    -   Process both **Outlier** and **Normal** samples for comparison.
-    -   Incremental processing (skips existing results unless `--regenerate` is used).
-
-**Launch Similarity Viewer:**
-```bash
-python3 scripts/similarity_viewer_app.py
-```
--   **URL**: http://localhost:8080 or http://localhost:5000
--   **Interface**:
-    -   Select samples from dropdown (labeled `[OUTLIER]` or `[NORMAL]`).
-    -   Interactive Plotly graph of similarity scores over time.
-    -   Video player synchronized with plot (click plot to seek).
-    -   **Annotated Video**: Overlays similarity scores and status (Stable/Change/Dip) for all strategies on the video frames.
-
-![Similarity Viewer Screenshot](assets/similarity_viewer_screenshot.png)
+    -   Clicking on a pair opens a **Detail Modal**.
+    -   **Debug Image/Text:** Shows exactly what the model "saw" (e.g., masked foreground, VLM caption, or storyboard grid).
 
 ## Directory Structure
 
 - `extracted_data/`: Dataset images and videos.
 - `scripts/`: Source code.
+    - `run_pipeline.sh`: Main entry point.
+    - `run_strategy.py`: Executes specific embedding strategies.
+    - `process_dataset.py`: Standardizes raw data into samples.
+    - `compute_projections.py`: Calculates PCA/UMAP/t-SNE.
     - `embeddings/`: Strategy implementations (`strategies.py`).
     - `analysis_results/`: Generated JSON results and debug images.
     - `templates/`: HTML frontend for the viewer.
