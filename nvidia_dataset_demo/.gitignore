@@ -3,9 +3,14 @@ __pycache__/
 *.pyc
 
 # Data
-extracted_data/
+extracted_data/**
+!extracted_data/**/
+!extracted_data/**/*.py
+!extracted_data/**/*.sh
 camera/
 .cache/
+
+checkpoints/
 
 # Models
 *.pt
