@@ -7,10 +7,10 @@ app = Flask(__name__)
 
 # Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# analysis_results is local to scripts/
-RESULTS_DIR = os.path.join(BASE_DIR, "analysis_results")
-# extracted_data is ../extracted_data
-DATA_ROOT = os.path.join(BASE_DIR, "../extracted_data")
+# analysis_results is at project root
+RESULTS_DIR = os.path.abspath(os.path.join(BASE_DIR, "../../analysis_results"))
+# extracted_data is at project root
+DATA_ROOT = os.path.abspath(os.path.join(BASE_DIR, "../../extracted_data"))
 
 @app.route('/')
 def index():

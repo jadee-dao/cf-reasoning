@@ -39,7 +39,7 @@ echo "========================================================"
 # This step verifies samples exist and prepares them.
 echo ""
 echo "[1/3] Processing/Verifying Dataset..."
-CMD_PROCESS="python3 scripts/process_dataset.py --dataset_name $DATASET --interval $INTERVAL"
+CMD_PROCESS="python3 src/processing/process_dataset.py --dataset_name $DATASET --interval $INTERVAL"
 if [ -n "$LIMIT" ]; then
     CMD_PROCESS="$CMD_PROCESS --limit $LIMIT"
 fi
@@ -50,7 +50,7 @@ $CMD_PROCESS
 # This generates embeddings and similarities.
 echo ""
 echo "[2/3] Running Embedding Strategy..."
-CMD_STRATEGY="python3 scripts/run_strategy.py --strategy $STRATEGY --dataset $DATASET"
+CMD_STRATEGY="python3 src/analysis/run_strategy.py --strategy $STRATEGY --dataset $DATASET"
 if [ -n "$LIMIT" ]; then
     CMD_STRATEGY="$CMD_STRATEGY --limit $LIMIT"
 fi
@@ -61,7 +61,7 @@ $CMD_STRATEGY
 # This computes UMAP/TSNE for visualization.
 echo ""
 echo "[3/3] Computing Projections..."
-CMD_PROJ="python3 scripts/compute_projections.py --dataset $DATASET --strategy $STRATEGY"
+CMD_PROJ="python3 src/analysis/compute_projections.py --dataset $DATASET --strategy $STRATEGY"
 echo "Running: $CMD_PROJ"
 $CMD_PROJ
 

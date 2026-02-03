@@ -58,7 +58,7 @@ class DatasetProcessor(ABC):
 class NvidiaDemoProcessor(DatasetProcessor):
     def __init__(self, dataset_name="nvidia_demo", raw_data_path=None, output_path=None):
         # Default paths if not provided
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../extracted_data"))
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../extracted_data"))
         if raw_data_path is None:
             raw_data_path = os.path.join(base_dir, "raw_data", dataset_name)
         if output_path is None:
@@ -135,7 +135,7 @@ class NvidiaDemoProcessor(DatasetProcessor):
 class NuScenesEgoProcessor(DatasetProcessor):
     def __init__(self, dataset_name="nuscenes_ego", raw_data_path=None, output_path=None):
         # Default paths if not provided
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../extracted_data"))
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../extracted_data"))
         
         # Default output: extracted_data/nuscenes_ego
         if output_path is None:

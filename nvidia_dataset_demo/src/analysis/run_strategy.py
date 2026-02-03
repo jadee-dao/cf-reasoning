@@ -8,10 +8,11 @@ import cv2
 import sys
 from tqdm import tqdm
 
-# Ensure we can import embeddings
+# Ensure we can import modules from src
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-if BASE_DIR not in sys.path:
-    sys.path.append(BASE_DIR)
+SRC_DIR = os.path.dirname(BASE_DIR) # .../src
+if SRC_DIR not in sys.path:
+    sys.path.append(SRC_DIR)
 
 from embeddings.strategies import (
     NaiveStrategy, 
@@ -29,8 +30,8 @@ from embeddings.strategies import (
 from dotenv import load_dotenv
 load_dotenv()
 
-DATA_ROOT = os.path.join(BASE_DIR, "../extracted_data")
-OUTPUT_ROOT = os.path.join(BASE_DIR, "analysis_results")
+DATA_ROOT = os.path.join(SRC_DIR, "../extracted_data")
+OUTPUT_ROOT = os.path.join(SRC_DIR, "../analysis_results")
 
 STRATEGIES = {
     "naive": NaiveStrategy,

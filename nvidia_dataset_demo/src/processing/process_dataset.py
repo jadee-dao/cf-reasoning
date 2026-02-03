@@ -19,7 +19,7 @@ def main():
     ProcessorClass = PROCESSORS[args.dataset_name]
     
     # Handle Raw Path Linkage
-    base_extracted = os.path.abspath(os.path.join(os.path.dirname(__file__), "../extracted_data"))
+    base_extracted = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../extracted_data"))
     raw_dest = os.path.join(base_extracted, "raw_data", args.dataset_name)
     
     if args.raw_path:

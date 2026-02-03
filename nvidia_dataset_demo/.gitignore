@@ -14,7 +14,8 @@ camera/
 *.onnx
 
 # Outputs and Reuslts
-scripts/analysis_results/
+analysis_results/
+models/
 scripts/runs/
 
 # System and IDE

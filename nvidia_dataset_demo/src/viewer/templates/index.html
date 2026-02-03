@@ -436,7 +436,7 @@
                     </div>
                     <div style="display:flex; align-items:center; gap:5px;">
                         <span
-                            style="width:12px; height:12px; border-radius:50%; background-color:transparent; border: 3px solid #ff8c00; display:inline-block;"></span>
+                            style="width:12px; height:12px; border-radius:50%; background-color:transparent; border: 3px solid #ff0000; display:inline-block;"></span>
                         Highlight (GT Outlier)
                     </div>
                 </div>
@@ -830,14 +830,29 @@
             const lineColors = [];
             const lineWidths = [];
 
-            points.forEach(p => {
+            const hoverBgColors = [];
+            const hoverBorderColors = [];
+            const hoverFontColors = [];
+
+            points.forEach((p, i) => {
                 let isGt = false;
                 if (gtSet && p.gt_outliers && p.gt_outliers[gtSet]) {
                     isGt = true;
                 }
                 pointSizes.push(12);
-                lineColors.push(isGt ? '#ff8c00' : 'rgba(0,0,0,0)');
+                lineColors.push(isGt ? '#ff0000' : 'rgba(0,0,0,0)');
                 lineWidths.push(isGt ? 3 : 0);
+
+                // Tooltip Colors
+                if (isGt) {
+                    hoverBgColors.push('#ff0000'); // Red Background
+                    hoverBorderColors.push(colors[i]); // Point Color Border
+                    hoverFontColors.push('#000000'); // Black Text for contrast
+                } else {
+                    hoverBgColors.push(colors[i]); // Normal Point Color
+                    hoverBorderColors.push(colors[i]); // Same Border
+                    hoverFontColors.push('#ffffff'); // White Text
+                }
             });
 
             // Build Traces
@@ -887,8 +902,11 @@
                 },
                 hoverinfo: 'text',
                 hoverlabel: {
-                    bgcolor: colors,
-                    bordercolor: lineColors
+                    bgcolor: hoverBgColors,
+                    bordercolor: hoverBorderColors,
+                    font: {
+                        color: hoverFontColors
+                    }
                 }
             };
 

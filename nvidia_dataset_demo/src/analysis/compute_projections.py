@@ -25,8 +25,9 @@ except ImportError:
     print("UMAP not found, skipping UMAP reduction.")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_ROOT = os.path.join(BASE_DIR, "../extracted_data")
-OUTPUT_ROOT = os.path.join(BASE_DIR, "analysis_results")
+SRC_DIR = os.path.dirname(BASE_DIR)
+DATA_ROOT = os.path.join(SRC_DIR, "../extracted_data")
+OUTPUT_ROOT = os.path.join(SRC_DIR, "../analysis_results")
 
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):

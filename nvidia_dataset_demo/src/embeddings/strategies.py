@@ -8,11 +8,14 @@ import cv2
 from .base import EmbeddingStrategy
 from .prompts import SCENE_DESCRIPTION_PROMPT, HAZARD_IDENTIFICATION_PROMPT
 
+import os 
+
 # --- Constants ---
 SIGLIP_MODEL_NAME = "google/siglip-so400m-patch14-384"
 SBERT_MODEL_NAME = "all-mpnet-base-v2"
 BLIP_MODEL_NAME = "Salesforce/blip-image-captioning-base"
-YOLO_MODEL_PATH = "yolo11n.pt" # Or 'yolo11n-seg.pt' for segmentation
+# Point to models directory
+YOLO_MODEL_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../models/yolo11n.pt"))
 
 def get_device():
     return "cuda" if torch.cuda.is_available() else "cpu"
