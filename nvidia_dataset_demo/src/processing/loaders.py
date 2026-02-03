@@ -153,6 +153,35 @@ class NuScenesDataset(Dataset):
             target = self.scores_map.get(key, 0.0)
             target = target / self.score_norm_factor
             target = torch.tensor(target, dtype=torch.float32)
+            
+        elif self.target_type == 'log_score':
+            # Log Normalization: log(1 + score)
+            raw_score = self.scores_map.get(key, 0.0)
+            target = np.log1p(raw_score)
+            target = torch.tensor(target, dtype=torch.float32)
+            
+        elif self.target_type == 'bin_class':
+            # Percentile-based Binning
+            # 0: < p50 (Low)
+            # 1: p50 - p90 (Medium)
+            # 2: p90 - p99 (High)
+            # 3: > p99 (Critical)
+            # Stats from check_stats.py:
+            # Median (p50): ~21
+            # p90: ~539
+            # p99: ~1475
+            
+            raw_score = self.scores_map.get(key, 0.0)
+            if raw_score < 21.0:
+                label = 0
+            elif raw_score < 539.0:
+                label = 1
+            elif raw_score < 1475.0:
+                label = 2
+            else:
+                label = 3
+            target = torch.tensor(label, dtype=torch.long)
+
         elif self.target_type == 'p90':
             outlier_info = self.outliers_map.get(key, {'is_p90': False})
             target = 1.0 if outlier_info['is_p90'] else 0.0

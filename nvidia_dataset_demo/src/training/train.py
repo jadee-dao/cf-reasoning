@@ -11,7 +11,7 @@ import numpy as np
 
 from torch.utils.tensorboard import SummaryWriter
 
-def train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs=10, device='cuda', save_dir='checkpoints'):
+def train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs=10, device='cuda', save_dir='checkpoints', scheduler=None):
     """
     Train loop.
     """
@@ -67,7 +67,12 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
         
         writer.add_scalar('Val/Loss', val_loss, epoch)
         for k, v in val_metrics.items():
-             writer.add_scalar(f'Val/{k}', v, epoch)
+            writer.add_scalar(f'Val/{k}', v, epoch)
+            
+        # Step Scheduler
+        if scheduler:
+            scheduler.step()
+            writer.add_scalar('Train/LR', scheduler.get_last_lr()[0], epoch)
         
         # Save best
         if val_loss < best_val_loss:
@@ -108,6 +113,16 @@ def validate(model, val_loader, criterion, device='cuda', writer=None, epoch=0):
     # Regression specific visualization
     if isinstance(criterion, (nn.MSELoss, nn.L1Loss)):
         metrics['mse'] = mean_squared_error(targets_all, preds_all)
+        metrics['mae'] = mean_absolute_error(targets_all, preds_all)
+        metrics['r2'] = r2_score(targets_all, preds_all)
+        
+        # Spearman correlation (ranking)
+        # Handle constant output case to avoid warnings
+        if len(set(preds_all)) > 1:
+            corr, _ = spearmanr(targets_all, preds_all)
+        else:
+            corr = 0.0
+        metrics['spearman'] = corr
         
         if writer:
             # Histograms
@@ -117,16 +132,19 @@ def validate(model, val_loader, criterion, device='cuda', writer=None, epoch=0):
             
             # Scatter Plot: Predicted vs Actual
             fig = plt.figure(figsize=(6, 6))
-            plt.scatter(targets_all, preds_all, alpha=0.5)
+            plt.scatter(targets_all, preds_all, alpha=0.5, label='Samples')
+            
             # Plot diagonal identity line
             lims = [
                 np.min([plt.xlim(), plt.ylim()]),  # min of both axes
                 np.max([plt.xlim(), plt.ylim()]),  # max of both axes
             ]
-            plt.plot(lims, lims, 'r-', alpha=0.75, zorder=0)
-            plt.title(f'Predicted vs Actual (Epoch {epoch})')
+            plt.plot(lims, lims, 'r-', alpha=0.75, zorder=0, label='Ideal')
+            
+            plt.title(f'Ep {epoch} | R2: {metrics["r2"]:.3f} | ρ: {corr:.3f}')
             plt.xlabel('Actual Score')
             plt.ylabel('Predicted Score')
+            plt.legend()
             plt.grid(True)
             
             writer.add_figure('Val/PredVsActual', fig, epoch)
@@ -144,5 +162,19 @@ def validate(model, val_loader, criterion, device='cuda', writer=None, epoch=0):
         
         if writer:
              writer.add_histogram('Val/Probabilities', probs, epoch)
+             
+    elif isinstance(criterion, nn.CrossEntropyLoss):
+        # Multi-class classification
+        preds = np.argmax(np.array(preds_all), axis=1)
+        targets = np.array(targets_all)
+        
+        acc = accuracy_score(targets, preds)
+        f1 = f1_score(targets, preds, average='macro')
+        metrics['accuracy'] = acc
+        metrics['f1_macro'] = f1
+        
+        if writer:
+            writer.add_histogram('Val/Predictions', preds, epoch)
+            writer.add_histogram('Val/Targets', targets, epoch)
     
     return epoch_loss, metrics
