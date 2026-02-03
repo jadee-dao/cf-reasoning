@@ -15,8 +15,6 @@ camera/
 
 # Outputs and Reuslts
 analysis_results/
-models/
-scripts/runs/
 
 # System and IDE
 .DS_Store

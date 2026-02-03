@@ -26,8 +26,6 @@ This project explores various **embedding strategies** for analyzing autonomous 
 ## Installation
 
 ```bash
-cd scripts
-
 pip install torch transformers sentence-transformers ultralytics flask opencv-python scikit-learn matplotlib pandas umap-learn dotenv
 ```
 
@@ -42,9 +40,9 @@ This should create a folder in `nvidia_dataset_demo/extracted_data`.
 
 To use the **OpenRouter** strategies (and access external VLMs like GPT-4o, Claude 3.5, or NVIDIA Nemotron), you must set up your API key.
 
-1.  Create a `.env` file in the `nvidia_dataset_demo/scripts` directory (or project root, depending on execution context):
+1.  Create a `.env` file in the `nvidia_dataset_demo` root directory:
     ```bash
-    touch scripts/.env
+    touch .env
     ```
 2.  Add your OpenRouter API key and Model Name:
     ```bash
@@ -59,11 +57,10 @@ The project uses a pipeline script to process data, generate embeddings, and com
 
 ### 1. Run the Pipeline
 
-The easiest way to run an analysis is using `run_pipeline.sh`:
+The easiest way to run an analysis is using `scripts/run_pipeline.sh`:
 
 ```bash
-cd scripts
-./run_pipeline.sh --dataset nvidia_demo --strategy [STRATEGY_NAME] --limit 10
+./scripts/run_pipeline.sh --dataset nvidia_demo --strategy [STRATEGY_NAME] --limit 10
 ```
 
 **Arguments:**
@@ -85,9 +82,9 @@ cd scripts
 
 **Manual Steps (Alternative):**
 If you prefer to run steps individually:
-1.  **Process Dataset:** `python3 process_dataset.py --dataset_name nvidia_demo --limit 10`
-2.  **Run Strategy:** `python3 run_strategy.py --strategy naive --dataset nvidia_demo`
-3.  **Compute Projections:** `python3 compute_projections.py --dataset nvidia_demo --strategy naive`
+1.  **Process Dataset:** `python3 src/processing/process_dataset.py --dataset_name nvidia_demo --limit 10`
+2.  **Run Strategy:** `python3 src/analysis/run_strategy.py --strategy naive --dataset nvidia_demo`
+3.  **Compute Projections:** `python3 src/analysis/compute_projections.py --dataset nvidia_demo --strategy naive`
 
 ***
 
@@ -96,15 +93,14 @@ If you prefer to run steps individually:
 Start the Flask app to view results in your browser:
 
 ```bash
-cd scripts
-python3 viewer_app.py
+python3 src/viewer/app.py
 ```
 
 Open **http://localhost:8080** in your browser.
 
 ## Viewer Interface
 
-The browser-based viewer (`viewer_app.py`) provides a rich interface for interacting with the analysis results.
+The browser-based viewer (`src/viewer/app.py`) provides a rich interface for interacting with the analysis results.
 
 ### Key Features:
 1.  **Strategy Selection:**  The dropdown menu allows you to switch between different `results_*.json` files instantly.
@@ -121,11 +117,15 @@ The browser-based viewer (`viewer_app.py`) provides a rich interface for interac
 ## Directory Structure
 
 - `extracted_data/`: Dataset images and videos.
-- `scripts/`: Source code.
-    - `run_pipeline.sh`: Main entry point.
-    - `run_strategy.py`: Executes specific embedding strategies.
-    - `process_dataset.py`: Standardizes raw data into samples.
-    - `compute_projections.py`: Calculates PCA/UMAP/t-SNE.
+- `src/`: Core source code.
+    - `analysis/`: Analysis scripts (`run_strategy.py`, `compute_projections.py`).
     - `embeddings/`: Strategy implementations (`strategies.py`).
-    - `analysis_results/`: Generated JSON results and debug images.
-    - `templates/`: HTML frontend for the viewer.
+    - `processing/`: Data processing and loaders (`process_dataset.py`, `loaders.py`).
+    - `viewer/`: Flask application (`app.py`) and templates.
+    - `training/`: Training scripts (`train.py`).
+    - `models/`: Model definitions and factories.
+- `scripts/`: Helper scripts.
+    - `run_pipeline.sh`: Main entry point.
+    - `run_strategy_pipeline.sh`: Strategy orchestration.
+    - `train_baseline.py`: Baseline training script.
+- `analysis_results/`: Generated JSON results and debug images.
