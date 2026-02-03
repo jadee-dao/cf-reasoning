@@ -6,7 +6,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from src.processing.loaders import NuScenesDataset
-from src.models.classifier import BaselineVideoClassifier
+from src.processing.inputs import VideoLoader, ImageLoader
+from src.models.factory import create_model
 from src.training.train import train_model
 
 def main():
@@ -15,7 +16,8 @@ def main():
     parser.add_argument('--json_path', type=str, required=True, help='Path to labels JSON')
     parser.add_argument('--npy_path', type=str, required=True, help='Path to scores NPY')
     parser.add_argument('--target_type', type=str, default='p90', choices=['p90', 'p99', 'score', 'log_score', 'bin_class'], help='Target to predict')
-    parser.add_argument('--backbone', type=str, default='r3d_18', choices=['r3d_18', 'simple_cnn'], help='Backbone architecture')
+    parser.add_argument('--modality', type=str, default='video', choices=['video', 'image'], help='Input modality')
+    parser.add_argument('--backbone', type=str, default='default', help='Backbone architecture')
     parser.add_argument('--batch_size', type=int, default=8, help='Batch size')
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
@@ -24,13 +26,22 @@ def main():
     
     args = parser.parse_args()
     
+    # Select Input Loader Strategy based on modality
+    if args.modality == 'video':
+        input_loader = VideoLoader()
+    elif args.modality == 'image':
+        input_loader = ImageLoader()
+    else:
+        raise ValueError(f"Unknown modality: {args.modality}")
+    
     # Dataset and Loaders
     train_dataset = NuScenesDataset(
         data_dir=args.data_dir,
         json_path=args.json_path,
         npy_path=args.npy_path,
         target_type=args.target_type,
-        mode='train'
+        mode='train',
+        input_loader=input_loader
     )
     
     val_dataset = NuScenesDataset(
@@ -38,7 +49,8 @@ def main():
         json_path=args.json_path,
         npy_path=args.npy_path,
         target_type=args.target_type,
-        mode='val'
+        mode='val',
+        input_loader=input_loader
     )
     
     # Weighted Sampler for training
@@ -61,15 +73,16 @@ def main():
     
     # Model Configuration
     if args.target_type == 'bin_class':
-        num_classes = 4 # Low, Med, High, Critical
+        num_classes = 10 # Deciles (0-9)
         criterion = nn.CrossEntropyLoss()
-        print(f"Using CrossEntropyLoss for {num_classes}-class classification.")
+        print(f"Using CrossEntropyLoss for {num_classes}-class classification (Deciles).")
     else:
         num_classes = 1
         criterion = nn.MSELoss()
         print(f"Using MSELoss for regression (Target: {args.target_type}).")
     
-    model = BaselineVideoClassifier(backbone_name=args.backbone, num_classes=num_classes)
+    # Create model via Factory
+    model = create_model(modality=input_loader.modality, backbone=args.backbone, num_classes=num_classes)
     model.to(args.device)
         
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4) # Added weight decay

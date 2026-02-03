@@ -6,6 +6,8 @@ import numpy as np
 from torch.utils.data import Dataset
 from typing import Optional, Callable, Dict, Any
 
+from .inputs import InputLoader, VideoLoader
+
 class NuScenesDataset(Dataset):
     """
     Dataset loader for nuScenes video clips and labels.
@@ -16,26 +18,29 @@ class NuScenesDataset(Dataset):
                  json_path: str, 
                  npy_path: str,
                  transform: Optional[Callable] = None,
-                 target_type: str = 'p90', # 'p90', 'p99', 'score'
+                 target_type: str = 'p90', # 'p90', 'p99', 'score', 'log_score', 'bin_class'
                  score_norm_factor: float = 1000.0,
                  mode: str = 'train',
-                 split_ratio: float = 0.8):
+                 split_ratio: float = 0.8,
+                 input_loader: Optional[InputLoader] = None):
         """
         Args:
             data_dir (str): Path to video samples.
             json_path (str): Path to outliers JSON.
             npy_path (str): Path to train npy file (scores).
             transform (callable): Transform pipeline.
-            target_type (str): 'p90', 'p99', or 'score'.
+            target_type (str): 'p90', 'p99', 'score', 'log_score', 'bin_class'.
             score_norm_factor (float): Factor to divide scores by.
             mode (str): 'train' or 'val'.
             split_ratio (float): Split ratio.
+            input_loader (InputLoader): Strategy for loading input (Video, Image, etc).
         """
         self.data_dir = data_dir
         self.transform = transform
         self.target_type = target_type
         self.score_norm_factor = score_norm_factor
         self.mode = mode
+        self.input_loader = input_loader or VideoLoader() # Default to VideoLoader
 
         # Load Outliers JSON (for classification)
         with open(json_path, 'r') as f:
@@ -68,6 +73,14 @@ class NuScenesDataset(Dataset):
         except Exception as e:
             print(f"Error loading {npy_path}: {e}")
             self.scores_map = {}
+
+        # Compute Percentile Bins if needed
+        if self.target_type == 'bin_class':
+            all_scores = list(self.scores_map.values())
+            # Create 10 bins (deciles)
+            # thresholds will have 9 values: 10th, 20th, ... 90th percentile
+            self.bin_thresholds = np.percentile(all_scores, np.linspace(10, 90, 9))
+            print(f"Decile Thresholds: {self.bin_thresholds}")
 
         # Scan directory for available videos
         video_files = [f for f in os.listdir(data_dir) if f.endswith('.mp4')]
@@ -102,47 +115,19 @@ class NuScenesDataset(Dataset):
         else:
             self.sample_list = self.sample_list[split_idx:]
             
-        print(f"Dataset ({mode}): {len(self.sample_list)} samples loaded.")
+        print(f"Dataset ({mode}): {len(self.sample_list)} samples loaded. Modality: {self.input_loader.modality}")
 
     def __len__(self):
         return len(self.sample_list)
 
-    def _load_video(self, video_path: str):
-        """Loads video frames using cv2."""
-        cap = cv2.VideoCapture(video_path)
-        frames = []
-        if not cap.isOpened():
-             return torch.zeros((3, 16, 224, 224)) 
-
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frames.append(frame)
-            
-        cap.release()
-        
-        if not frames:
-             return torch.zeros((3, 16, 224, 224))
-        
-        return np.array(frames)
-
     def __getitem__(self, idx):
         sample_info = self.sample_list[idx]
-        video_path = os.path.join(self.data_dir, sample_info['video_filename'])
-        video = self._load_video(video_path)
+        
+        # Use Strategy to load input
+        video = self.input_loader.load(self.data_dir, sample_info)
         
         if self.transform:
             video = self.transform(video)
-        else:
-            # Default transform
-            if isinstance(video, np.ndarray):
-                video = torch.from_numpy(video).float() / 255.0
-                video = video.permute(3, 0, 1, 2) # (C, T, H, W)
-                
-                # Ensure fixed temporal size
-                video = torch.nn.functional.interpolate(video.unsqueeze(0), size=(16, 224, 224), mode='trilinear', align_corners=False).squeeze(0)
 
         # Labels
         sid = sample_info['scene_id']
@@ -161,25 +146,12 @@ class NuScenesDataset(Dataset):
             target = torch.tensor(target, dtype=torch.float32)
             
         elif self.target_type == 'bin_class':
-            # Percentile-based Binning
-            # 0: < p50 (Low)
-            # 1: p50 - p90 (Medium)
-            # 2: p90 - p99 (High)
-            # 3: > p99 (Critical)
-            # Stats from check_stats.py:
-            # Median (p50): ~21
-            # p90: ~539
-            # p99: ~1475
-            
+            # Dynamic Percentile Binning (Deciles)
             raw_score = self.scores_map.get(key, 0.0)
-            if raw_score < 21.0:
-                label = 0
-            elif raw_score < 539.0:
-                label = 1
-            elif raw_score < 1475.0:
-                label = 2
-            else:
-                label = 3
+            # np.digitize returns index of the bin the value belongs to.
+            # bins[i-1] <= x < bins[i]
+            # Since self.bin_thresholds has 9 values, digitize returns 0..9
+            label = np.digitize(raw_score, self.bin_thresholds)
             target = torch.tensor(label, dtype=torch.long)
 
         elif self.target_type == 'p90':
