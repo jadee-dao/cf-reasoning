@@ -116,7 +116,6 @@ The browser-based viewer (`src/viewer/app.py`) provides a rich interface for int
 
 ## Directory Structure
 
-- `extracted_data/`: Dataset images and videos.
 - `src/`: Core source code.
     - `analysis/`: Analysis scripts (`run_strategy.py`, `compute_projections.py`).
     - `embeddings/`: Strategy implementations (`strategies.py`).

@@ -6,6 +6,7 @@ __pycache__/
 extracted_data/**
 !extracted_data/**/
 !extracted_data/**/*.py
+!extracted_data/**/*.npy
 !extracted_data/**/*.sh
 camera/
 .cache/

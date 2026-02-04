@@ -8,7 +8,7 @@ import argparse
 # Constants
 MAPPING_FILE = "/home/jadelynn/cf-reasoning/nvidia_dataset_demo/extracted_data/nuscenes_ego/nuscenes_ego_front_mapping.json"
 BLOBS_DIR = "/home/shared_data/external_drive/nuScenes"
-EXTRACT_DIR = "/home/jadelynn/cf-reasoning/nvidia_dataset_demo/extracted_data/raw_data/nuscenes_ego"
+EXTRACT_DIR = "/home/shared_data/external_drive/nuScenes"
 FILE_LIST_PATH = "/home/jadelynn/cf-reasoning/nvidia_dataset_demo/extracted_data/ego_files_to_extract.txt"
 
 def main():

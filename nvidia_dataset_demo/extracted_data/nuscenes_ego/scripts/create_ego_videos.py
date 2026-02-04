@@ -6,8 +6,8 @@ from tqdm import tqdm
 
 # Constants
 MAPPING_FILE = "/home/jadelynn/cf-reasoning/nvidia_dataset_demo/extracted_data/nuscenes_ego/nuscenes_ego_front_mapping.json"
-IMAGE_ROOT = "/home/jadelynn/cf-reasoning/nvidia_dataset_demo/extracted_data/raw_data/nuscenes_ego"
-OUTPUT_DIR = "/home/jadelynn/cf-reasoning/nvidia_dataset_demo/extracted_data/raw_data/nuscenes_ego/videos"
+IMAGE_ROOT = "/home/shared_data/external_drive/nuScenes"
+OUTPUT_DIR = "/home/shared_data/external_drive/nuScenes/videos"
 FPS = 12
 
 import argparse

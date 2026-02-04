@@ -7,8 +7,8 @@ from tqdm import tqdm
 # Constants
 TRAIN_FILE = "/home/jadelynn/cf-reasoning/nvidia_dataset_demo/extracted_data/nuscenes_ego/calibration/nuscenes_train.npy"
 VAL_FILE = "/home/jadelynn/cf-reasoning/nvidia_dataset_demo/extracted_data/nuscenes_ego/calibration/nuscenes_val.npy"
-VIDEO_DIR = "/home/jadelynn/cf-reasoning/nvidia_dataset_demo/extracted_data/raw_data/nuscenes_ego/videos"
-OUTPUT_DIR = "/home/jadelynn/cf-reasoning/nvidia_dataset_demo/extracted_data/nuscenes_ego/video_samples"
+VIDEO_DIR = "/home/shared_data/external_drive/nuScenes/videos"
+OUTPUT_DIR = "/home/shared_data/external_drive/nuScenes/video_samples"
 
 # Parameters
 HISTORY_SEC = 5.0

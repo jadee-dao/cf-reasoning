@@ -4,8 +4,8 @@ import subprocess
 from tqdm import tqdm
 
 # Constants
-INPUT_DIR = "/home/jadelynn/cf-reasoning/nvidia_dataset_demo/extracted_data/nuscenes_ego/video_samples"
-OUTPUT_DIR = "/home/jadelynn/cf-reasoning/nvidia_dataset_demo/extracted_data/nuscenes_ego/samples"
+INPUT_DIR = "/home/shared_data/external_drive/nuScenes/video_samples"
+OUTPUT_DIR = "/home/shared_data/external_drive/nuScenes/samples"
 
 # Cut parameters (relative to the 9s clip where t=5.0 is the event)
 # We want [t-1.5, t] -> [3.5, 5.0]

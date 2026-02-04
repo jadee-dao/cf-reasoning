@@ -10,7 +10,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # analysis_results is at project root
 RESULTS_DIR = os.path.abspath(os.path.join(BASE_DIR, "../../analysis_results"))
 # extracted_data is at project root
-DATA_ROOT = os.path.abspath(os.path.join(BASE_DIR, "../../extracted_data"))
+DATA_ROOT = "/home/shared_data/external_drive"
 
 @app.route('/')
 def index():
