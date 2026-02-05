@@ -8,6 +8,7 @@ extracted_data/**
 !extracted_data/**/*.py
 !extracted_data/**/*.npy
 !extracted_data/**/*.sh
+!extracted_data/nuscenes_ego/calibration/nuscenes_percentile_outliers.json
 camera/
 .cache/
 
