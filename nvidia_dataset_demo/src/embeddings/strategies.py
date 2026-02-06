@@ -468,6 +468,255 @@ class FastViTAttentionStrategy(EmbeddingStrategy):
 
 
 
+
+class SemanticObjectDistributionStrategy(EmbeddingStrategy):
+    """
+    Combines quantitative object counts (YOLO) with spatial interactivity metrics.
+    Generates a description like: "High density traffic scene with 5 cars. Objects are clustered." 
+    Embeds this description with SBERT.
+    """
+    def load_model(self):
+        if not self.model_loaded:
+            print(f"Loading SBERT model: {SBERT_MODEL_NAME}...")
+            self.sbert = SentenceTransformer(SBERT_MODEL_NAME)
+            
+            # BLIP no longer needed for this strategy
+            
+            print(f"Loading YOLO Detection model: {YOLO_MODEL_PATH}...")
+            self.det_model = YOLO("yolo11n.pt")
+            self.model_loaded = True
+
+    def _analyze_interactions(self, boxes, width, height):
+        """
+        Analyzes bounding boxes for spatial distribution.
+        boxes: List of [x1, y1, x2, y2, cls_id]
+        """
+        if not boxes:
+            return "Empty scene", "None", []
+
+        # 1. Pre-processing: Filter small objects and duplicates
+        valid_boxes = []
+        for b in boxes:
+            x1, y1, x2, y2, cls_id = b
+            area = (x2 - x1) * (y2 - y1)
+            norm_area = area / (width * height)
+            
+            # Class-specific thresholds
+            # Vulnerable classes (Person, Bicycle, Motorcycle) - keep even if small
+            # Assuming COCO classes roughly: 0=person, 1=bicycle, 3=motorcycle... 
+            # We don't have the names map here directly unless we pass it or infer.
+            # But the caller passed `boxes` which we modified to include cls_id.
+            # We assume standard YOLO classes: 0:person, 1:bicycle, 2:car, 3:motorcycle, 5:bus, 7:truck
+            
+            is_vulnerable = cls_id in [0, 1, 3] 
+            
+            # Thresholds
+            # Person/Bike: 0.05% (very small but visible)
+            # Vehicle: 0.1% (capture distant cars that might be relevant for p90)
+            threshold = 0.0005 if is_vulnerable else 0.001
+            
+            if norm_area > threshold: 
+                valid_boxes.append(b)
+                
+        # Simple NMS-like deduplication (IoU check)
+        unique_boxes = []
+        if valid_boxes:
+            # Sort by area descending
+            valid_boxes.sort(key=lambda b: (b[2]-b[0])*(b[3]-b[1]), reverse=True)
+            unique_boxes.append(valid_boxes[0])
+            
+            for i in range(1, len(valid_boxes)):
+                b1 = valid_boxes[i]
+                overlap = False
+                for b2 in unique_boxes:
+                    # Calculate IoU
+                    xA = max(b1[0], b2[0])
+                    yA = max(b1[1], b2[1])
+                    xB = min(b1[2], b2[2])
+                    yB = min(b1[3], b2[3])
+                    interArea = max(0, xB - xA) * max(0, yB - yA)
+                    box1Area = (b1[2] - b1[0]) * (b1[3] - b1[1])
+                    box2Area = (b2[2] - b2[0]) * (b2[3] - b2[1])
+                    iou = interArea / float(box1Area + box2Area - interArea)
+                    
+                    if iou > 0.8: # High overlap -> Duplicate/Same object
+                        overlap = True
+                        break
+                if not overlap:
+                    unique_boxes.append(b1)
+        
+        boxes = unique_boxes
+        num_objs = len(boxes)
+        
+        if num_objs == 0:
+             return "Sparse/Empty scene", "No interactions", []
+
+        centers = []
+        for b in boxes:
+            x1, y1, x2, y2 = b[:4]
+            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+            centers.append((cx / width, cy / height))
+
+        # 2. Density / Proximity Metrics
+        if num_objs > 1:
+            distances = []
+            centers_np = np.array(centers)
+            for i in range(num_objs):
+                for j in range(i + 1, num_objs):
+                    dist = np.linalg.norm(centers_np[i] - centers_np[j])
+                    distances.append(dist)
+            avg_dist = np.mean(distances) if distances else 0.0
+            min_dist = np.min(distances) if distances else 0.0
+        else:
+            avg_dist = 0.0
+            min_dist = 1.0
+            
+        # 3. Logic to text (Tuned Thresholds)
+        density_desc = "Low density"
+        if num_objs > 4:
+            if avg_dist < 0.2: density_desc = "Very High density (crowded)"
+            elif avg_dist < 0.4: density_desc = "High density"
+            else: density_desc = "Moderate density"
+        elif num_objs > 1:
+             if avg_dist < 0.15: density_desc = "Tightly clustered group"
+             else: density_desc = "Distributed objects"
+             
+        proximity_desc = "No close interactions"
+        if num_objs > 1 and min_dist < 0.02: 
+            proximity_desc = "Critical proximity detected (collision risk)"
+        elif num_objs > 1 and min_dist < 0.08:
+            proximity_desc = "Close interaction detected"
+            
+        return density_desc, proximity_desc, boxes
+
+    def generate_embedding(self, image_path: str, **kwargs) -> np.array:
+        self.load_model()
+        image = Image.open(image_path).convert("RGB")
+        w, h = image.size
+        
+        # 1. Run YOLO
+        results = self.det_model(image_path, verbose=False, conf=0.25)
+        result = results[0]
+        
+        raw_boxes = []
+        if result.boxes is not None:
+             for box in result.boxes:
+                 coords = box.xyxy[0].cpu().numpy()
+                 cls_id = int(box.cls[0])
+                 # [x1, y1, x2, y2, cls_id]
+                 b = np.append(coords, cls_id)
+                 raw_boxes.append(b)
+
+        # 2. Analyze Interactions
+        density, proximity, filtered_boxes = self._analyze_interactions(raw_boxes, w, h)
+        
+        # Recalculate counts based on FILTERED boxes
+        counts = {}
+        for b in filtered_boxes:
+             cls_id = int(b[4])
+             label = result.names[cls_id]
+             counts[label] = counts.get(label, 0) + 1
+             
+        if counts:
+            count_parts = [f"{count} {label}{'s' if count > 1 else ''}" for label, count in counts.items()]
+            count_str = ", ".join(count_parts)
+        else:
+            count_str = "no detected objects"
+        
+        # 3. Synthesize Description
+        description = f"Scene Content: {count_str}. Analysis: {density}. {proximity}."
+        
+        # 4. Save Debug Info (Custom Drawing)
+        if "debug_output_path" in kwargs:
+            # Load CV2 image
+            debug_img = cv2.imread(image_path)
+            
+            # Draw Filtered Boxes
+            for b in filtered_boxes:
+                x1, y1, x2, y2 = map(int, b[:4])
+                cls_id = int(b[4])
+                label = result.names[cls_id]
+                
+                # Green Box
+                color = (0, 255, 0) 
+                cv2.rectangle(debug_img, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(debug_img, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                
+            # Overlay Description Text (Top of image with background)
+            banner_height = 80
+            cv2.rectangle(debug_img, (0, 0), (w, banner_height), (0, 0, 0), -1)
+            
+            # Fit text
+            cv2.putText(debug_img, f"Analysis: {density}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(debug_img, f"{proximity}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (100, 100, 255), 2)
+            cv2.putText(debug_img, f"Counts: {count_str}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+            
+            cv2.imwrite(kwargs["debug_output_path"], debug_img)
+            
+            txt_path = kwargs["debug_output_path"].replace(".jpg", ".txt")
+            with open(txt_path, "w") as f:
+                f.write(description)
+
+        # 5. Embed
+        return self.sbert.encode(description)
+
+
+class ObjectCountStrategy(EmbeddingStrategy):
+    """
+    Generates an embedding which is simply the raw count of objects in the scene.
+    Vector: [n_person, n_bicycle, n_car, n_motorcycle, n_bus, n_truck]
+    
+    This is a "Feature Vector" approach to test if simple object count correlates
+    with interactivity outliers.
+    """
+    def __init__(self):
+        super().__init__()
+        self.model = None
+
+    def load_model(self):
+        if not self.model_loaded:
+             print(f"Loading YOLO Detection model: {YOLO_MODEL_PATH}...")
+             try:
+                 from ultralytics import YOLO
+                 self.model = YOLO("yolo11n.pt") 
+                 self.model_loaded = True
+             except ImportError:
+                 print("Error: ultralytics not installed. Please install it.")
+                 self.model = None
+
+    def generate_embedding(self, image_path, video_path=None, **kwargs):
+        self.load_model()
+        if self.model is None:
+            return np.zeros(6, dtype=np.float32)
+            
+        results = self.model(image_path, verbose=False)
+        result = results[0]
+        
+        # COCO Classes:
+        # 0: person, 1: bicycle, 2: car, 3: motorcycle, 5: bus, 7: truck
+        target_classes = [0, 1, 2, 3, 5, 7]
+        counts = {cls_id: 0 for cls_id in target_classes}
+        
+        if result.boxes is not None:
+            for box in result.boxes:
+                cls_id = int(box.cls[0])
+                if cls_id in counts:
+                    counts[cls_id] += 1
+                
+        # Create vector
+        # [Person, Bike, Car, Motor, Bus, Truck]
+        vector = [
+            counts[0], # Person
+            counts[1], # Bike
+            counts[2], # Car
+            counts[3], # Motorcycle
+            counts[5], # Bus
+            counts[7]  # Truck
+        ]
+        
+        # Return as numpy array (float32 for compatibility)
+        return np.array(vector, dtype=np.float32)
+
 # --- OpenRouter Strategies ---
 
 import requests
@@ -798,9 +1047,146 @@ class OpenRouterStoryboardStrategy(OpenRouterDescriptionStrategy):
             txt_path = kwargs["debug_output_path"].replace(".jpg", ".txt")
             with open(txt_path, "w") as f:
                 f.write(description)
-            
-            # Save the stitched grid!
-            cv2.imwrite(kwargs["debug_output_path"], grid_img)
 
-        # 7. Embed
-        return self.sbert.encode(description)
+
+class InternVideoStrategy(EmbeddingStrategy):
+    """
+    Uses InternVideo (based on VideoMAE V2) to embed video clips.
+    Model: OpenGVLab/internvideo-mm-l-14 
+    This implementation follows VideoMAE structure but uses the enhanced V2 model via AutoModel.
+    """
+    def load_model(self):
+        if not self.model_loaded:
+            # User requested specific model
+            model_name = "OpenGVLab/InternVideo2_5_Chat_8B" 
+            print(f"Loading InternVideo 2.5 Chat model: {model_name}...")
+            
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+            
+            self.device = get_device()
+            # 8B model requires device_map="auto" to fit/offload
+            # trust_remote_code is REQUIRED for InternVideo models
+            try:
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_name, 
+                    trust_remote_code=True, 
+                    device_map="auto",
+                    torch_dtype=torch.float16
+                )
+                self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+                self.model_loaded = True
+            except Exception as e:
+                print(f"Error loading {model_name}: {e}")
+                print("Make sure you are logged in: 'hf auth login'")
+                raise e
+
+    def generate_embedding(self, image_path: str, **kwargs) -> np.array:
+        self.load_model()
+        
+        video_path = kwargs.get("video_path")
+        if not video_path:
+            raise ValueError("Video path not provided for InternVideo Strategy")
+
+        # 1. Sample Frames
+        # InternVideo2.5 typically uses 8-16 frames. 
+        cap = cv2.VideoCapture(video_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames <= 0: total_frames = 16
+        
+        # Sample 16 frames
+        indices = np.linspace(0, total_frames-1, 16).astype(int)
+        
+        frames = []
+        for idx in indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if ret:
+                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            else:
+                if frames:
+                    frames.append(frames[-1])
+                else:
+                    frames.append(np.zeros((224, 224, 3), dtype=np.uint8))
+        cap.release()
+        
+        # 2. Debug Filmstrip
+        if "debug_output_path" in kwargs:
+            target_h = 100
+            scale = target_h / frames[0].shape[0]
+            target_w = int(frames[0].shape[1] * scale)
+            resized_frames = [cv2.resize(f, (target_w, target_h)) for f in frames[::2]]
+            filmstrip = np.concatenate(resized_frames, axis=1)
+            Image.fromarray(filmstrip).save(kwargs["debug_output_path"])
+
+        # 3. Generate Embedding (Vision Encode Only)
+        # InternVideo2.5 usually has a 'extract_feature' or we access vision_tower directly
+        # The model class is usually InternVLChatModel
+        
+        # Prepare inputs: Raw frames -> Pixel Values
+        # Note: The model's image processor logic is complex, often using dynamic resolution.
+        # We will try the simplest path: model.encode_video usually exists or visual_encoder
+        
+        try:
+            # Convert to tensor [T, C, H, W] or [1, T, C, H, W]
+            # Standard resize to 224 for embedding speed/consistency unless model enforces higher
+            pixel_values = []
+            for f in frames:
+                f_resized = cv2.resize(f, (224, 224))
+                f_tensor = torch.from_numpy(f_resized).permute(2, 0, 1).float() / 255.0
+                pixel_values.append(f_tensor)
+            
+            # [T, C, H, W]
+            video_tensor = torch.stack(pixel_values) 
+            
+            # Normalize (ImageNet mean/std usually)
+            mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+            std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+            video_tensor = (video_tensor - mean) / std
+            
+            # Add batch dim [1, T, C, H, W]
+            video_tensor = video_tensor.unsqueeze(0).to(self.device).half()
+
+            with torch.no_grad():
+                # Attempt 1: visual_encoder directly
+                if hasattr(self.model, 'vision_model'):
+                    # InternVL structure
+                    # [B*T, C, H, W] -> flatten batch/time for vision tower?
+                    b, t, c, h, w = video_tensor.shape
+                    # reshape to [B*T, C, H, W]
+                    vision_input = video_tensor.view(-1, c, h, w)
+                    vision_features = self.model.vision_model(vision_input)
+                    # Output shape: [B*T, num_patches, hidden_size]
+                    # Average pool over patches and time
+                    # vision_features.last_hidden_state
+                    feats = vision_features.last_hidden_state
+                    embedding = torch.mean(feats, dim=(0, 1)) # Mean over T and Patches
+                    
+                elif hasattr(self.model, 'extract_feature'):
+                    # Some variants have this
+                    embedding = self.model.extract_feature(video_tensor)
+                    
+                else:
+                    # Fallback: Forward pass might return full multimodal output
+                    # This is tricky for Chat models without text input.
+                    # We will try to find 'vision_tower'
+                    vision_tower = getattr(self.model, 'vision_tower', None)
+                    if vision_tower:
+                         # Similar reshaping as above might be needed
+                         b, t, c, h, w = video_tensor.shape
+                         vision_input = video_tensor.view(-1, c, h, w)
+                         feats = vision_tower(vision_input)
+                         # feats might be a list or tuple, take last
+                         if isinstance(feats, (list, tuple)): feats = feats[-1]
+                         embedding = torch.mean(feats, dim=(0, 1))
+                    else:
+                        raise ValueError("Could not locate vision encoder in InternVideo model.")
+
+            # Normalize
+            if len(embedding.shape) > 1: embedding = embedding.flatten()
+            embedding = embedding / embedding.norm(p=2, dim=-1, keepdim=True)
+            return embedding.cpu().float().numpy()
+            
+        except Exception as e:
+            print(f"Embedding failed: {e}")
+            # Identify failure type (OOM vs API)
+            return np.zeros(1024) # Placeholder

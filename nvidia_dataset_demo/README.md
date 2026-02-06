@@ -88,7 +88,25 @@ If you prefer to run steps individually:
 
 ***
 
-### 2. Launch the Viewer
+### 2. Outlier Analysis (New)
+
+Analyze outlier scores using multiple strategies and methods (IMLP, LOF, Isolation Forest, etc.).
+
+```bash
+# Run analysis for all methods
+./scripts/run_new_analysis.sh
+
+# Or specific strategy
+python3 src/analysis/analyze_outliers.py --strategy video_mae
+```
+
+This generates:
+- Distribution plots in `analysis_results/outlier_analysis/<strategy>/`
+- Score JSONs in `analysis_results/outliers/`
+
+***
+
+### 3. Launch the Viewer
 
 Start the Flask app to view results in your browser:
 

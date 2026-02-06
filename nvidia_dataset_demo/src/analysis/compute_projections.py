@@ -112,9 +112,17 @@ class DatasetProjector(ABC):
         preds = iso.fit_predict(embeddings)
         return (preds == -1) # True if outlier
 
-    def process_independent(self, dataset_list):
+    def process_independent(self, dataset_list, force=False):
         for dname in dataset_list:
             print(f"\n--- Processing Independent: {dname} ---")
+            
+            PROJ_DIR = os.path.join(OUTPUT_ROOT, "projections", self.strategy_name)
+            out_json = os.path.join(PROJ_DIR, f"{dname}.json")
+            
+            if os.path.exists(out_json) and not force:
+                print(f"Projections already exist at {out_json}. Skipping.")
+                continue
+
             # 1. Load Embeddings for single dataset
             emb_file = os.path.join(OUTPUT_ROOT, "embeddings", self.strategy_name, f"{dname}.pkl")
             if not os.path.exists(emb_file):
@@ -183,16 +191,22 @@ class DatasetProjector(ABC):
                 points.append(point_data)
                 
             # 5. Save
-            PROJ_DIR = os.path.join(OUTPUT_ROOT, "projections", self.strategy_name)
             os.makedirs(PROJ_DIR, exist_ok=True)
-            out_json = os.path.join(PROJ_DIR, f"{dname}.json")
             
             with open(out_json, "w") as f:
                 json.dump({"points": points}, f, indent=2, cls=NumpyEncoder)
             print(f"Saved INDEPENDENT projections for {dname} to {out_json}")
 
-    def process_global(self, dataset_list):
+    def process_global(self, dataset_list, force=False):
         print(f"\n--- Processing Global Combined: {dataset_list} ---")
+        
+        PROJ_DIR = os.path.join(OUTPUT_ROOT, "projections", self.strategy_name)
+        out_json = os.path.join(PROJ_DIR, "global.json")
+        
+        if os.path.exists(out_json) and not force:
+            print(f"Global projections already exist at {out_json}. Skipping.")
+            return
+
         # 1. Load All Embeddings
         all_ids = []
         all_embeddings = []
@@ -295,9 +309,7 @@ class DatasetProjector(ABC):
             points.append(point_data)
             
         # 5. Save Global File
-        PROJ_DIR = os.path.join(OUTPUT_ROOT, "projections", self.strategy_name)
         os.makedirs(PROJ_DIR, exist_ok=True)
-        out_json = os.path.join(PROJ_DIR, "global.json")
         
         with open(out_json, "w") as f:
             json.dump({"points": points}, f, indent=2, cls=NumpyEncoder)
@@ -400,6 +412,7 @@ def main():
     parser = argparse.ArgumentParser(description="Compute Projections: Independent & Global")
     parser.add_argument("--strategy", type=str, required=True, help="Strategy name")
     parser.add_argument("--datasets", type=str, default=None, help="Comma separated list of datasets. If empty, scans dir.")
+    parser.add_argument("--force", action="store_true", help="Force re-compute projections even if files exist")
     args = parser.parse_args()
 
     # Find datasets
@@ -424,10 +437,10 @@ def main():
     driver = NvidiaProjector("dummy", args.strategy, None)
     
     # 1. Process Independent
-    driver.process_independent(target_datasets)
+    driver.process_independent(target_datasets, force=args.force)
     
     # 2. Process Global
-    driver.process_global(target_datasets)
+    driver.process_global(target_datasets, force=args.force)
 
 if __name__ == "__main__":
     main()

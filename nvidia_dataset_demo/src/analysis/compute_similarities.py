@@ -14,7 +14,7 @@ except ImportError:
     sys.exit(1)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_ROOT = os.path.join(BASE_DIR, "analysis_results")
+OUTPUT_ROOT = os.path.join(BASE_DIR, "../../analysis_results")
 
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
