@@ -143,29 +143,110 @@ def run_analysis_for_method(strategy_name, method_name, k, nuscenes_data, nvidia
             print("MLP requires NuScenes data and Ground Truth. Skipping.")
             return
 
-        print("Running MLP Analysis with Train/Test Split...")
+        print("Running MLP Analysis with Scene-Based Split...")
         # Prepare targets
         y = np.array([1 if uid in gt_outliers else 0 for uid in nuscenes_ids])
         
-        # Split
-        X_train, X_test, y_train, y_test, ids_train, ids_test = train_test_split(
-            nuscenes_emb, y, nuscenes_ids, test_size=0.3, random_state=42, stratify=y
-        )
+        # Extract Scene IDs (Assumption: format scene-XXXX_sampleID)
+        # We group by the part before the first underscore
+        scene_ids = np.array([uid.split('_')[0] for uid in nuscenes_ids])
+        unique_scenes = np.unique(scene_ids)
+        
+        # Determine which scenes have outliers for stratified splitting
+        scene_has_outlier = {}
+        for uid, label in zip(nuscenes_ids, y):
+            s_id = uid.split('_')[0]
+            if label == 1:
+                scene_has_outlier[s_id] = True
+            elif s_id not in scene_has_outlier:
+                scene_has_outlier[s_id] = False
+        
+        outlier_scenes = [s for s, has in scene_has_outlier.items() if has]
+        normal_scenes = [s for s, has in scene_has_outlier.items() if not has]
+        
+        print(f"  Total Scenes: {len(unique_scenes)}")
+        print(f"  Outlier Scenes: {len(outlier_scenes)}, Normal Scenes: {len(normal_scenes)}")
+        
+        # Split scenes (aim for 70/30 split)
+        # We try to put some outlier scenes in both train and test if possible
+        train_scenes = []
+        test_scenes = []
+        
+        # Helper to split list
+        def split_list(lst, test_ratio=0.3):
+            # Deterministic shuffle based on content/random_state concept
+            # Using sklearn's train_test_split on the list of scenes
+            if len(lst) < 2:
+                # Cannot split effectively, put in train (or handle as edge case)
+                return lst, []
+            tr, te = train_test_split(lst, test_size=test_ratio, random_state=42)
+            return tr, te
+
+        if outlier_scenes:
+            o_train, o_test = split_list(outlier_scenes, 0.3)
+            # Ensure we have at least one outlier scene in train if possible to learn the class
+            if len(outlier_scenes) > 1 and len(o_train) == 0:
+                 # Force one into train if random split put all in test (unlikely with 0.3 but possible with small N)
+                 o_train = [o_test.pop(0)]
+            
+            train_scenes.extend(o_train)
+            test_scenes.extend(o_test)
+            
+        if normal_scenes:
+            n_train, n_test = split_list(normal_scenes, 0.3)
+            train_scenes.extend(n_train)
+            test_scenes.extend(n_test)
+            
+        train_scenes_set = set(train_scenes)
+        test_scenes_set = set(test_scenes)
+        
+        # Create Masks
+        train_mask = np.isin(scene_ids, list(train_scenes_set))
+        test_mask = np.isin(scene_ids, list(test_scenes_set))
+        
+        X_train = nuscenes_emb[train_mask]
+        y_train = y[train_mask]
+        X_test = nuscenes_emb[test_mask]
+        y_test = y[test_mask]
+        ids_test = nuscenes_ids[test_mask]
+        
+        print(f"  Train: {len(X_train)} samples, {sum(y_train)} outliers")
+        print(f"  Test: {len(X_test)} samples, {sum(y_test)} outliers")
+        
+        if len(X_train) == 0 or len(X_test) == 0:
+             print("  Error: Split resulted in empty train or test set. Skipping MLP.")
+             return
+             
+        if sum(y_train) == 0:
+             print("  Warning: No outliers in training set. MLP cannot learn the outlier class.")
+             # Proceeding anyway usually results in predicting all zeros.
         
         # Train
         mlp = MLPClassifier(hidden_layer_sizes=(128, 64), max_iter=500, random_state=42)
         mlp.fit(X_train, y_train)
         
         # Predict (Probabilities for class 1 = Outlier)
-        y_scores = mlp.predict_proba(X_test)[:, 1]
+        # Check if model learned only one class
+        if len(mlp.classes_) < 2:
+             # Likely only 0s in train
+             y_scores = np.zeros(len(X_test))
+        else:
+             y_scores = mlp.predict_proba(X_test)[:, 1]
         
         # Calculate Metrics on Test Set
-        fpr, tpr, roc_thresholds = roc_curve(y_test, y_scores)
-        roc_auc = auc(fpr, tpr)
-        
-        precision, recall, pr_thresholds = precision_recall_curve(y_test, y_scores)
-        pr_auc = average_precision_score(y_test, y_scores)
-        
+        # Handle case where test set has no outliers (can calculate ROC but might warn)
+        if sum(y_test) == 0:
+             print("  Warning: No outliers in test set. AUROC undefined/not useful.")
+             roc_auc = 0.0
+             pr_auc = 0.0
+             fpr, tpr = [0], [0] # dummy
+        else:
+            fpr, tpr, roc_thresholds = roc_curve(y_test, y_scores)
+            roc_auc = auc(fpr, tpr)
+            
+            precision, recall, pr_thresholds = precision_recall_curve(y_test, y_scores)
+            pr_auc = average_precision_score(y_test, y_scores)
+
         metrics = {
             "roc_auc": float(roc_auc),
             "pr_auc": float(pr_auc)
@@ -190,7 +271,10 @@ def run_analysis_for_method(strategy_name, method_name, k, nuscenes_data, nvidia
         # Prediction on Nvidia (if available) - just for saving
         nvidia_scores = None
         if nvidia_ids is not None:
-             nvidia_scores = mlp.predict_proba(nvidia_emb)[:, 1]
+             if len(mlp.classes_) < 2:
+                  nvidia_scores = np.zeros(len(nvidia_emb))
+             else:
+                  nvidia_scores = mlp.predict_proba(nvidia_emb)[:, 1]
 
         # Save Scores (Only for Test set of NuScenes + All Nvidia)
         scores_data = {}
