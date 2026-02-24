@@ -16,6 +16,8 @@ SBERT_MODEL_NAME = "all-mpnet-base-v2"
 BLIP_MODEL_NAME = "Salesforce/blip-image-captioning-base"
 # Point to models directory
 YOLO_MODEL_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../models/yolo11n.pt"))
+DINOV2_MODEL_NAME = "facebook/dinov2-small"
+DEPTH_MODEL_NAME = "depth-anything/Depth-Anything-V2-Small-hf"
 
 def get_device():
     return "cuda" if torch.cuda.is_available() else "cpu"
@@ -1178,15 +1180,287 @@ class InternVideoStrategy(EmbeddingStrategy):
                          # feats might be a list or tuple, take last
                          if isinstance(feats, (list, tuple)): feats = feats[-1]
                          embedding = torch.mean(feats, dim=(0, 1))
-                    else:
-                        raise ValueError("Could not locate vision encoder in InternVideo model.")
-
-            # Normalize
-            if len(embedding.shape) > 1: embedding = embedding.flatten()
-            embedding = embedding / embedding.norm(p=2, dim=-1, keepdim=True)
-            return embedding.cpu().float().numpy()
+            return embedding.cpu().numpy()
             
         except Exception as e:
             print(f"Embedding failed: {e}")
             # Identify failure type (OOM vs API)
             return np.zeros(1024) # Placeholder
+
+class ObjectGraphStrategy(EmbeddingStrategy):
+    """
+    Represent scene as a spatial graph:
+    - Nodes: Ego-vehicle + detected objects.
+    - Node Features: DINOv2 token pooling (patch-aligned features) + Depth + Metadata.
+    - Edges: Directed relative-to-ego spatial relationships (Distance, Depth, Bearing).
+    - Output: A pooled graph embedding for pipeline compatibility + detailed JSON export.
+    """
+    def __init__(self):
+        super().__init__()
+        self.seg_model = None
+        self.depth_model = None
+        self.dinov2_model = None
+        self.dinov2_processor = None
+        self.depth_processor = None
+
+    def load_model(self):
+        if not self.model_loaded:
+            print(f"Loading YOLOv11-seg...")
+            self.seg_model = YOLO("yolo11n-seg.pt")
+            
+            print(f"Loading DepthAnythingV2...")
+            from transformers import AutoImageProcessor, AutoModelForDepthEstimation
+            self.depth_processor = AutoImageProcessor.from_pretrained(DEPTH_MODEL_NAME)
+            self.depth_model = AutoModelForDepthEstimation.from_pretrained(DEPTH_MODEL_NAME).to(get_device())
+            
+            print(f"Loading DINOv2...")
+            from transformers import BitImageProcessor, Dinov2Model
+            self.dinov2_processor = BitImageProcessor.from_pretrained(DINOV2_MODEL_NAME)
+            self.dinov2_model = Dinov2Model.from_pretrained(DINOV2_MODEL_NAME).to(get_device())
+            
+            self.model_loaded = True
+
+    def generate_embedding(self, image_path: str, **kwargs) -> np.array:
+        self.load_model()
+        device = get_device()
+        
+        # 1. Load Image
+        image = Image.open(image_path).convert("RGB")
+        w, h = image.size
+        img_cv2 = cv2.imread(image_path)
+        
+        # 2. Run Segmentation (YOLOv11-seg)
+        results = self.seg_model(image_path, verbose=False, conf=0.25)
+        result = results[0]
+        
+        # 3. Run Depth Estimation
+        depth_inputs = self.depth_processor(images=image, return_tensors="pt").to(device)
+        with torch.no_grad():
+            depth_outputs = self.depth_model(**depth_inputs)
+            # DepthAnythingV2 outputs predicted depth
+            predicted_depth = depth_outputs.predicted_depth 
+            # Resize to original image size
+            depth_map = torch.nn.functional.interpolate(
+                predicted_depth.unsqueeze(1),
+                size=(h, w),
+                mode="bicubic",
+                align_corners=False,
+            ).squeeze().cpu().numpy()
+            
+        # Normalize depth for feature use [0, 1] - DepthAnythingV2 typically outputs higher values for closer objects
+        # We want 0 = closest (ego) and 1 = furthest for intuitive distance calcs
+        depth_mean = depth_map.mean()
+        depth_std = depth_map.std()
+        # Standard min-max normalization
+        depth_norm = (depth_map - depth_map.min()) / (depth_map.max() - depth_map.min() + 1e-8)
+        # Invert so 0 is close, 1 is far
+        depth_norm = 1.0 - depth_norm
+
+        # 4. Run DINOv2 for Spatial Tokens
+        # DINOv2 expects image size to be multiple of patch size (14)
+        # Standard size for small is often 518x518 (37*14)
+        dinov2_size = 518
+        # Ensure image is resized to a multiple of 14 for the vision transformer
+        image_resized = image.resize((dinov2_size, dinov2_size))
+        dinov2_inputs = self.dinov2_processor(images=image_resized, return_tensors="pt").to(device)
+        with torch.no_grad():
+            dinov2_outputs = self.dinov2_model(**dinov2_inputs)
+            # [1, 1 + L, 384]
+            last_hidden_state = dinov2_outputs.last_hidden_state
+            
+            # Dynamically calculate grid size
+            num_tokens = last_hidden_state.shape[1] - 1
+            grid_size = int(np.sqrt(num_tokens))
+            if grid_size * grid_size != num_tokens:
+                 print(f"Warning: tokens {num_tokens} not a perfect square.")
+            
+            # Exclude CLS token and reshape
+            patch_tokens = last_hidden_state[:, 1:, :].reshape(grid_size, grid_size, 384)
+            # Update grid size for later use
+            PATCH_GRID_SIZE = grid_size
+            
+        # 5. Build Graph Nodes
+        nodes = []
+        
+        # Ego Node (Fixed position: Bottom Middle)
+        ego_pos = (h - 1, w // 2)
+        ego_depth = depth_norm[ego_pos[0], ego_pos[1]]
+        # Use zeros for ego visual features or a generic placeholder
+        nodes.append({
+            "id": "ego",
+            "type": "ego",
+            "pos": [ego_pos[1] / w, ego_pos[0] / h],
+            "depth": float(ego_depth),
+            "features": np.zeros(384).tolist(), # Ego visual features placeholder
+            "class": -1
+        })
+        
+        object_visual_features = []
+        
+        if result.masks is not None:
+            for i, mask in enumerate(result.masks.data):
+                m_np = mask.cpu().numpy() # [mask_h, mask_w] - usually downsampled by YOLO
+                m_resized = cv2.resize(m_np, (w, h))
+                m_binary = (m_resized > 0.5).astype(np.uint8)
+                
+                if np.sum(m_binary) < 100: continue # Skip tiny objects
+                
+                # Centroid
+                M = cv2.moments(m_binary)
+                if M["m00"] == 0: continue
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+                
+                # Average Depth
+                avg_depth = np.mean(depth_norm[m_binary == 1])
+                
+                # DINOv2 Token Pooling
+                # Map mask to grid
+                m_token_grid = cv2.resize(m_binary, (PATCH_GRID_SIZE, PATCH_GRID_SIZE), interpolation=cv2.INTER_AREA)
+                m_token_binary = m_token_grid > 0.1 # Threshold for patch inclusion
+                
+                selected_tokens = patch_tokens[m_token_binary]
+                if selected_tokens.shape[0] > 0:
+                    node_visual_features = torch.mean(selected_tokens, dim=0).cpu().numpy()
+                else:
+                    # Fallback to the token at the centroid
+                    tx = int((cx / w) * PATCH_GRID_SIZE)
+                    ty = int((cy / h) * PATCH_GRID_SIZE)
+                    tx = min(PATCH_GRID_SIZE - 1, max(0, tx))
+                    ty = min(PATCH_GRID_SIZE - 1, max(0, ty))
+                    node_visual_features = patch_tokens[ty, tx].cpu().numpy()
+                
+                cls_id = int(result.boxes[i].cls[0])
+                label = result.names[cls_id]
+                
+                nodes.append({
+                    "id": f"obj_{i}",
+                    "type": "object",
+                    "label": label,
+                    "class": cls_id,
+                    "pos": [cx / w, cy / h],
+                    "depth": float(avg_depth),
+                    "features": node_visual_features.tolist(),
+                    "area": float(np.sum(m_binary) / (w * h))
+                })
+                object_visual_features.append(node_visual_features)
+
+        # 6. Build Edges (Relative to Ego)
+        edges = []
+        ego_node = nodes[0]
+        for node in nodes[1:]:
+            # Relative spatial calcs
+            dx = node["pos"][0] - ego_node["pos"][0]
+            dy = node["pos"][1] - ego_node["pos"][1]
+            dist = np.sqrt(dx**2 + dy**2)
+            d_depth = node["depth"] - ego_node["depth"]
+            bearing = np.arctan2(dx, -dy) # Relative to "up" which is forward
+            
+            edges.append({
+                "source": node["id"],
+                "target": "ego",
+                "dist": float(dist),
+                "d_depth": float(d_depth),
+                "bearing": float(bearing)
+            })
+
+        # 7. Generate Pooled Embedding (Pipeline Compatibility)
+        if object_visual_features:
+            mean_obj_features = np.mean(object_visual_features, axis=0)
+            # Add some spatial summary
+            # [Mean_Visual (384) | Num_Objects (1) | Avg_Dist (1) | Avg_Depth (1)]
+            num_objs = len(object_visual_features)
+            avg_obj_dist = np.mean([e["dist"] for e in edges])
+            avg_obj_depth = np.mean([n["depth"] for n in nodes[1:]])
+            
+            spatial_summary = np.array([num_objs / 20.0, avg_obj_dist, avg_obj_depth], dtype=np.float32)
+            final_embedding = np.concatenate([mean_obj_features, spatial_summary])
+        else:
+            final_embedding = np.zeros(387, dtype=np.float32)
+            
+        # 8. Save Debug Info
+        if "debug_output_path" in kwargs:
+            # Save Graph JSON
+            graph_data = {"nodes": nodes, "edges": edges}
+            import json
+            json_path = kwargs["debug_output_path"].replace(".jpg", "_graph.json")
+            with open(json_path, "w") as f:
+                json.dump(graph_data, f, indent=2)
+                
+            # Visualization
+            vis_img = img_cv2.copy()
+            
+            # Draw Masks (Unique Colors)
+            if result.masks is not None:
+                mask_overlay = np.zeros_like(vis_img)
+                for j, mask in enumerate(result.masks.data):
+                    m_np = mask.cpu().numpy()
+                    m_resized = cv2.resize(m_np, (w, h))
+                    m_binary = (m_resized > 0.5).astype(np.uint8)
+                    
+                    # Generate a unique color for each object using a hash or predefined colormap
+                    # We'll use a simple deterministic color generation based on index
+                    color = [(j * 40) % 255, (j * 80) % 255, (j * 120) % 255]
+                    mask_overlay[m_binary == 1] = color
+                
+                # Blend overlay with original image
+                cv2.addWeighted(mask_overlay, 0.4, vis_img, 0.8, 0, vis_img)
+            
+            # Draw objects and Ego connection
+            ego_px = (int(ego_node["pos"][0] * w), int(ego_node["pos"][1] * h))
+            
+            # Draw Edges first (so they are below nodes)
+            # Find min/max distance for normalization
+            dists = [e["dist"] for e in edges]
+            max_dist = max(dists) if dists else 1.0
+            min_dist = min(dists) if dists else 0.0
+            
+            for i, node in enumerate(nodes[1:]):
+                obj_px = (int(node["pos"][0] * w), int(node["pos"][1] * h))
+                edge = edges[i]
+                
+                # Thickness: Inversely proportional to distance (closer = thicker)
+                # Normalize dist to [0, 1]
+                norm_dist = (edge["dist"] - min_dist) / (max_dist - min_dist + 1e-8)
+                thickness = int(max(1, (1.0 - norm_dist) * 8))
+                
+                # Color: Gradient based on depth (Blue = Close, Red = Far)
+                # Depth Anything V2 normalized depth is 0 (close) to 1 (far)
+                # BGR: (B, G, R)
+                # Blue (255, 0, 0) -> Red (0, 0, 255)
+                d = node["depth"]
+                edge_color = (int((1.0 - d) * 255), int((1.0 - d) * 128), int(d * 255))
+                
+                # Line to Ego
+                cv2.line(vis_img, obj_px, ego_px, edge_color, thickness)
+
+            cv2.circle(vis_img, ego_px, 12, (0, 0, 255), -1) # Bold Red Ego
+            cv2.circle(vis_img, ego_px, 14, (255, 255, 255), 2) # White Ring for Ego
+            
+            for i, node in enumerate(nodes[1:]):
+                obj_px = (int(node["pos"][0] * w), int(node["pos"][1] * h))
+                # Identify object index from id
+                try:
+                    j = int(node["id"].split("_")[1])
+                    color = [(j * 40) % 255, (j * 80) % 255, (j * 120) % 255]
+                except:
+                    color = (0, 255, 0)
+
+                # Center Point
+                cv2.circle(vis_img, obj_px, 6, color, -1)
+                cv2.circle(vis_img, obj_px, 8, (255, 255, 255), 1) # Small white ring
+                
+                # Line to Ego
+                cv2.line(vis_img, obj_px, ego_px, (255, 255, 255), 1)
+                
+                # Label with background for readability
+                label_str = f"{node['label']} (D:{node['depth']:.2f})"
+                (tw, th), _ = cv2.getTextSize(label_str, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+                cv2.rectangle(vis_img, (obj_px[0]+10, obj_px[1]-th-2), (obj_px[0]+10+tw, obj_px[1]+2), (0,0,0), -1)
+                cv2.putText(vis_img, label_str, (obj_px[0]+10, obj_px[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+            
+            cv2.imwrite(kwargs["debug_output_path"], vis_img)
+
+        # Normalize and return
+        final_embedding = final_embedding / (np.linalg.norm(final_embedding) + 1e-8)
+        return final_embedding

@@ -21,6 +21,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 OUTPUT_ROOT = os.path.join(BASE_DIR, "analysis_results")
 EMBEDDINGS_DIR = os.path.join(OUTPUT_ROOT, "embeddings")
 GT_OUTLIERS_PATH = os.path.join(BASE_DIR, "extracted_data", "nuscenes_ego", "calibration", "nuscenes_percentile_outliers.json")
+ASIL_SCORES_PATH = os.path.join(OUTPUT_ROOT, "ground_truth", "asil_scores_nuscenes_ego.json")
 RESULTS_DIR = os.path.join(OUTPUT_ROOT, "outlier_analysis")
 OUTLIERS_DIR = os.path.join(OUTPUT_ROOT, "outliers")
 
@@ -71,17 +72,39 @@ def load_embeddings(strategy, dataset_filter=None):
         return None, None
     return np.array(all_ids), all_embeddings
 
-def load_ground_truth():
-    """Loads the ground truth outliers from JSON."""
-    if not os.path.exists(GT_OUTLIERS_PATH):
-        print(f"Warning: Ground truth file not found at {GT_OUTLIERS_PATH}")
-        return None
+def load_ground_truth(gt_type='surprise'):
+    """Loads the ground truth outliers from JSON based on gt_type."""
+    if gt_type == 'surprise':
+        if not os.path.exists(GT_OUTLIERS_PATH):
+            print(f"Warning: Ground truth file not found at {GT_OUTLIERS_PATH}")
+            return None
+            
+        with open(GT_OUTLIERS_PATH, "r") as f:
+            data = json.load(f)
         
-    with open(GT_OUTLIERS_PATH, "r") as f:
-        data = json.load(f)
+        outliers_map = data.get("generated_samples", {})
+        return outliers_map
     
-    outliers_map = data.get("generated_samples", {})
-    return outliers_map
+    elif gt_type in ['asil_ge_A', 'asil_ge_B']:
+        if not os.path.exists(ASIL_SCORES_PATH):
+            print(f"Warning: ASIL ground truth file not found at {ASIL_SCORES_PATH}")
+            return None
+            
+        with open(ASIL_SCORES_PATH, "r") as f:
+            asil_data = json.load(f)
+            
+        outliers_map = {}
+        for uid, scores in asil_data.items():
+            score = scores.get("asil_score", 0)
+            if gt_type == 'asil_ge_A' and score >= 1:
+                outliers_map[uid] = True
+            elif gt_type == 'asil_ge_B' and score >= 2:
+                outliers_map[uid] = True
+                
+        return outliers_map
+    else:
+        print(f"Unknown gt_type: {gt_type}")
+        return None
 
 def compute_outlier_scores(embeddings, method='lof', k=20, random_state=42):
     """
@@ -130,8 +153,8 @@ def compute_outlier_scores(embeddings, method='lof', k=20, random_state=42):
 
     return scores
 
-def run_analysis_for_method(strategy_name, method_name, k, nuscenes_data, nvidia_data, gt_outliers, output_dir):
-    print(f"\n=== Running Analysis: {method_name} ===")
+def run_analysis_for_method(strategy_name, method_name, k, nuscenes_data, nvidia_data, gt_outliers, output_dir, gt_type):
+    print(f"\n=== Running Analysis: {method_name} (GT: {gt_type}) ===")
     
     # Unpack data
     nuscenes_ids, nuscenes_emb = nuscenes_data
@@ -261,7 +284,7 @@ def run_analysis_for_method(strategy_name, method_name, k, nuscenes_data, nvidia
         plt.ylim([0.0, 1.05])
         plt.xlabel('False Positive Rate')
         plt.ylabel('True Positive Rate')
-        plt.title(f'ROC: {strategy_name} - {method_name}')
+        plt.title(f'ROC: {strategy_name} - {method_name} (GT: {gt_type})')
         plt.legend(loc="lower right")
         plt.grid(True, alpha=0.3)
         roc_path = os.path.join(output_dir, f"{method_name}_roc.png")
@@ -358,7 +381,7 @@ def run_analysis_for_method(strategy_name, method_name, k, nuscenes_data, nvidia
             plt.ylim([0.0, 1.05])
             plt.xlabel('False Positive Rate')
             plt.ylabel('True Positive Rate')
-            plt.title(f'ROC: {strategy_name} - {method_name}')
+            plt.title(f'ROC: {strategy_name} - {method_name} (GT: {gt_type})')
             plt.legend(loc="lower right")
             plt.grid(True, alpha=0.3)
             roc_path = os.path.join(output_dir, f"{method_name}_roc.png")
@@ -390,7 +413,7 @@ def run_analysis_for_method(strategy_name, method_name, k, nuscenes_data, nvidia
         plt.hist(nuscenes_gt_scores, bins=bins, density=True, histtype=hist_type, linewidth=line_width,
                  label=f'nuScenes GT (N={len(nuscenes_gt_scores)})', color='red')
 
-    plt.title(f"Outlier Scores: {strategy_name} - {method_name} (N={len(nuscenes_normal_scores) + len(nuscenes_gt_scores)})\n(Scores computed within each dataset context)")
+    plt.title(f"Outlier Scores: {strategy_name} - {method_name} (GT: {gt_type}, N={len(nuscenes_normal_scores) + len(nuscenes_gt_scores)})\n(Scores computed within each dataset context)")
     plt.xlabel(f"{method_name} Score (Higher = More Outlier)")
     plt.ylabel("Density")
     plt.legend()
@@ -436,6 +459,7 @@ def main():
     parser = argparse.ArgumentParser(description="Analyze Comparative Embedding Outliers")
     parser.add_argument("--strategy", type=str, required=True, help="Strategy name (e.g., fastvit_attention)")
     parser.add_argument("--k", type=int, default=20, help="Number of neighbors for LOF (default, can be overridden by loop)")
+    parser.add_argument("--gt_type", type=str, default="surprise", choices=["surprise", "asil_ge_A", "asil_ge_B"], help="Ground truth outliers to use")
     args = parser.parse_args()
 
     # Methods to run
@@ -466,7 +490,7 @@ def main():
     try:
         nuscenes_data = load_embeddings(args.strategy, "nuscenes_ego")
         nvidia_data = load_embeddings(args.strategy, "nvidia_demo")
-        gt_outliers = load_ground_truth()
+        gt_outliers = load_ground_truth(args.gt_type)
     except Exception as e:
         print(f"Error loading data: {e}")
         return
@@ -484,7 +508,7 @@ def main():
             # compute_outlier_scores handles 'lof' but not 'lof_k20'.
             # So inside run_analysis_for_method, we need to handle this.
             # I updated run_analysis_for_method to split('_k')[0].
-            run_analysis_for_method(args.strategy, method_name, k_val, nuscenes_data, nvidia_data, gt_outliers, strategy_output_dir)
+            run_analysis_for_method(args.strategy, method_name, k_val, nuscenes_data, nvidia_data, gt_outliers, strategy_output_dir, args.gt_type)
         except Exception as e:
             print(f"Failed to run analysis for {method_name}: {e}")
 

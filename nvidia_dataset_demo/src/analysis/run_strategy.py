@@ -27,7 +27,8 @@ from embeddings.strategies import (
     ObjectCountStrategy,
     OpenRouterDescriptionStrategy,
     OpenRouterHazardStrategy,
-    OpenRouterStoryboardStrategy
+    OpenRouterStoryboardStrategy,
+    ObjectGraphStrategy
 )
 
 from dotenv import load_dotenv
@@ -49,7 +50,8 @@ STRATEGIES = {
     "video_vit": ViViTStrategy,
     "openrouter_description": OpenRouterDescriptionStrategy,
     "openrouter_hazard": OpenRouterHazardStrategy,
-    "openrouter_storyboard": OpenRouterStoryboardStrategy
+    "openrouter_storyboard": OpenRouterStoryboardStrategy,
+    "object_graph": ObjectGraphStrategy
 }
 
 def load_processed_samples(dataset_name, limit=None):

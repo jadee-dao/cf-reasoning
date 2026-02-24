@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Default gt_metric if not provided as first argument
+GT_METRIC=${1:-surprise_potential_p90}
+
 # Define paths
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EMBEDDINGS_DIR="$BASE_DIR/analysis_results/embeddings"
@@ -15,7 +18,7 @@ for strategy_path in "$EMBEDDINGS_DIR"/*; do
         echo "Running outlier analysis for strategy: $strategy_name"
         echo "---------------------------------------------------"
         
-        python3 "$SCRIPT_PATH" --strategy "$strategy_name"
+        python3 "$SCRIPT_PATH" --strategy "$strategy_name" --gt_metric "$GT_METRIC"
         
         echo ""
     fi

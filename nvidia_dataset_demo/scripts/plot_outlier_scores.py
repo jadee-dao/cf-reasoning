@@ -1,11 +1,14 @@
 
 import os
 import json
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pandas as pd
 import glob
 import numpy as np
 import re
+import argparse
 from sklearn.metrics import roc_curve, auc
 
 def parse_filename(filename):
@@ -46,14 +49,30 @@ def parse_filename(filename):
             
     return None, None
 
-def load_ground_truth(gt_path):
-    if not os.path.exists(gt_path):
-        print(f"Error: GT file not found at {gt_path}")
+def load_ground_truth(dataset, gt_metric):
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
+    projections_dir = os.path.join(project_root, 'analysis_results', 'projections')
+    
+    # Find any projection file for this dataset to read GT
+    files = glob.glob(os.path.join(projections_dir, '*', f"{dataset}.json"))
+    if not files:
+        print(f"Error: No projection files found for dataset {dataset}")
         return None
         
-    with open(gt_path, 'r') as f:
+    proj_path = files[0]
+    print(f"Loading Ground Truth from {proj_path} using metric: {gt_metric}")
+    
+    with open(proj_path, 'r') as f:
         data = json.load(f)
-    return set(data.get("generated_samples", {}).keys())
+        
+    outliers_set = set()
+    for pt in data.get("points", []):
+        gt = pt.get("gt_outliers", {})
+        if gt.get(gt_metric):
+            outliers_set.add(pt["id"])
+            
+    return set(outliers_set)
 
 def load_scores(data_dir):
     data = []
@@ -153,20 +172,22 @@ def plot_roc_curves(df, gt_outliers, output_path):
     print(f"ROC Plot saved to {output_path}")
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--gt_metric", type=str, default="surprise_potential_p90", help="Ground truth metric to use (e.g., asil_ge_A)")
+    parser.add_argument("--dataset", type=str, default="nuscenes_ego", help="Dataset name")
+    args = parser.parse_args()
+
     # Define paths relative to script location
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir) # ../
     
     data_dir = os.path.join(project_root, 'analysis_results', 'outliers')
-    gt_path = os.path.join(project_root, 'extracted_data', 'nuscenes_ego', 'calibration', 'nuscenes_percentile_outliers.json')
 
     if not os.path.exists(data_dir):
         # absolute path fallback
         data_dir = '/home/jadelynn/cf-reasoning/nvidia_dataset_demo/analysis_results/outliers'
-        gt_path = '/home/jadelynn/cf-reasoning/nvidia_dataset_demo/extracted_data/nuscenes_ego/calibration/nuscenes_percentile_outliers.json'
 
-    print(f"Loading Ground Truth from {gt_path}")
-    gt_outliers = load_ground_truth(gt_path)
+    gt_outliers = load_ground_truth(args.dataset, args.gt_metric)
     if gt_outliers is None:
         return
 
@@ -177,7 +198,7 @@ def main():
         print("No data found!")
         return
 
-    output_file = os.path.join(data_dir, 'outlier_roc_curves.png')
+    output_file = os.path.join(data_dir, f'outlier_roc_curves_{args.gt_metric}.png')
     plot_roc_curves(df, gt_outliers, output_file)
 
 if __name__ == "__main__":
