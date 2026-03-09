@@ -25,7 +25,7 @@ The system supports a wide range of strategies grouped by methodology:
 - **Object Counts**: Uses raw counts of detected objects (e.g., "3 cars, 1 pedestrian") as a feature vector.
 - **Semantic Counts**: Distribution-based representation of object classes in the scene.
 
-#### 4. Spatial Graph (Advanced)
+#### 4. Spatial Graph (Scene Graphs, more structured)
 - **Object Graph**: **[New]** Represents the scene as a spatial graph.
     - **Nodes**: Ego-vehicle and objects (cars, trucks, people).
     - **Visual Features**: Contextualized node embeddings via DINOv2 Spatial Token Pooling.
