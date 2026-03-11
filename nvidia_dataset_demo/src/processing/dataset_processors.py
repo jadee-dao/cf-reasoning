@@ -9,6 +9,7 @@ except ImportError:
 import json
 from tqdm import tqdm
 from abc import ABC, abstractmethod
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 class DatasetProcessor(ABC):
     def __init__(self, dataset_name, raw_data_path, output_path):
@@ -25,34 +26,43 @@ class DatasetProcessor(ABC):
     def process(self):
         pass
 
-    def _extract_interval(self, video_path, output_video_path, output_image_path, start_time, duration):
-        """Extracts a sub-clip and a representative frame."""
+    def _extract_interval(self, video_path, output_video_path, output_image_path, start_time, duration, frame_time=None):
+        """Extracts a sub-clip and/or a representative frame."""
         try:
-            # Extract sub-video
-            cmd_video = [
-                "ffmpeg", "-y", "-v", "error",
-                "-ss", str(start_time),
-                "-t", str(duration),
-                "-i", video_path,
-                "-c:v", "libx264", "-c:a", "aac",
-                output_video_path
-            ]
-            subprocess.run(cmd_video, check=True)
+            # Format times to avoid scientific notation (ffmpeg doesn't like it)
+            start_str = "{:.6f}".format(max(0, start_time))
+            dur_str = "{:.6f}".format(duration)
             
-            # Extract frame (middle of clip or start?) 
-            # Original script used start_time. Let's stick to start_time for consistency with {timestamp} naming.
-            cmd_frame = [
-                "ffmpeg", "-y", "-v", "error",
-                "-ss", str(start_time),
-                "-i", video_path,
-                "-frames:v", "1",
-                "-q:v", "2",
-                output_image_path
-            ]
-            subprocess.run(cmd_frame, check=True)
+            # Extract sub-video if output path is provided
+            if output_video_path:
+                cmd_video = [
+                    "ffmpeg", "-y", "-v", "error",
+                    "-ss", start_str,
+                    "-t", dur_str,
+                    "-i", video_path,
+                    "-c:v", "libx264", "-c:a", "aac",
+                    output_video_path
+                ]
+                subprocess.run(cmd_video, check=True)
+            
+            # Extract frame if output path is provided
+            if output_image_path:
+                if frame_time is None:
+                    frame_time = start_time
+                
+                frame_str = "{:.6f}".format(frame_time)
+                    
+                cmd_frame = [
+                    "ffmpeg", "-y", "-v", "error",
+                    "-ss", frame_str,
+                    "-i", video_path,
+                    "-frames:v", "1",
+                    "-q:v", "2",
+                    output_image_path
+                ]
+                subprocess.run(cmd_frame, check=True)
             return True
-        except subprocess.CalledProcessError as e:
-            print(f"Error processing video chunk {output_video_path}: {e}")
+        except subprocess.CalledProcessError:
             return False
 
 class NvidiaDemoProcessor(DatasetProcessor):
@@ -66,6 +76,81 @@ class NvidiaDemoProcessor(DatasetProcessor):
             
         super().__init__(dataset_name, raw_data_path, output_path)
     
+    def process_shards(self, shard_paths, limit=None, max_workers=8, extract_video=True, output_dir=None):
+        """Processes specific calibration shards using parallel execution."""
+        base_target_dir = output_dir if output_dir else self.samples_dir
+        os.makedirs(base_target_dir, exist_ok=True)
+        
+        print(f"Processing shards: {shard_paths} with {max_workers} workers (extract_video={extract_video}, base_output_dir={base_target_dir})")
+        
+        # Hardcoded raw path for camera as per user request
+        raw_camera_root = "/home/shared_data/external_drive/PhysicalAI-Autonomous-Vehicles/camera/camera_front_wide_120fov"
+        
+        tasks = []
+        for shard_path in shard_paths:
+            if not os.path.exists(shard_path):
+                print(f"Warning: Shard {shard_path} not found.")
+                continue
+            
+            # Create shard-specific subdirectory
+            shard_name = os.path.basename(shard_path).replace(".jsonl", "")
+            shard_dir = os.path.join(base_target_dir, shard_name)
+            os.makedirs(shard_dir, exist_ok=True)
+                
+            with open(shard_path, 'r') as f:
+                lines = f.readlines()
+                
+            if limit:
+                lines = lines[:limit]
+                
+            for line in lines:
+                try:
+                    sample = json.loads(line)
+                    scene_id = sample["scene_id"]
+                    chunk_name = sample["chunk_name"]
+                    timestamp_us = sample["timestamp_us"]
+                    
+                    video_path = os.path.join(raw_camera_root, chunk_name, f"{scene_id}.camera_front_wide_120fov.mp4")
+                    
+                    sample_id = f"{scene_id}_{timestamp_us}"
+                    out_vid = os.path.join(shard_dir, f"{sample_id}.mp4") if extract_video else None
+                    out_img = os.path.join(shard_dir, f"{sample_id}.jpg")
+                    
+                    needs_vid = extract_video and (not out_vid or not os.path.exists(out_vid))
+                    needs_img = not os.path.exists(out_img)
+                    
+                    if needs_vid or needs_img:
+                        target_sec = timestamp_us / 1_000_000.0
+                        start_time = target_sec - 1.0
+                        duration = 1.5
+                        
+                        tasks.append((video_path, out_vid, out_img, start_time, duration, target_sec))
+                except Exception as e:
+                    print(f"Error parsing sample: {e}")
+
+        if not tasks:
+            print("No new samples to process.")
+            return
+
+        print(f"Total samples to extract: {len(tasks)}")
+        
+        processed_count = 0
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            future_to_task = {executor.submit(self._extract_interval, *task): task for task in tasks}
+            
+            pbar = tqdm(total=len(tasks), desc="Extracting Samples")
+            for future in as_completed(future_to_task):
+                try:
+                    if future.result():
+                        processed_count += 1
+                except Exception as e:
+                    # print(f"Extraction failed for task {future_to_task[future]}: {e}")
+                    pass
+                pbar.update(1)
+            pbar.close()
+                    
+        print(f"Finished shard processing. Total samples processed/checked: {processed_count}")
+
     def process(self, interval_sec=1.5, limit=None):
         print(f"Processing {self.dataset_name} from {self.raw_data_path}...")
         

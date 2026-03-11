@@ -65,8 +65,8 @@ def load_processed_samples(dataset_name, limit=None):
     # We need both image and video usually.
     # We iterating over IDs.
     
-    # Implementation: Find all .jpg files (easier to count)
-    files = glob.glob(os.path.join(samples_dir, "*.jpg"))
+    # Implementation: Find all .jpg files recursively
+    files = glob.glob(os.path.join(samples_dir, "**/*.jpg"), recursive=True)
     files.sort()
     
     if limit:
@@ -77,11 +77,15 @@ def load_processed_samples(dataset_name, limit=None):
         # ID is filename without extension
         filename = os.path.basename(img_path)
         sample_id = os.path.splitext(filename)[0]
-        video_path = os.path.join(samples_dir, f"{sample_id}.mp4")
+        # Video path should be next to the image path
+        video_path = img_path.replace(".jpg", ".mp4")
+        
+        rel_path = os.path.relpath(img_path, samples_dir)
         
         samples.append({
             "id": sample_id,
             "image_path": img_path,
+            "rel_path": rel_path,
             "video_path": video_path if os.path.exists(video_path) else None
         })
         
@@ -134,12 +138,13 @@ def main():
     for s in pbar:
         pbar.set_description(f"Processing {s['id']}")
         
-        # Debug Output Path
-        debug_img_path = os.path.join(viz_dir, f"{s['id']}.jpg")
+        # Debug Output Path (Preserve shard subdirectories)
+        debug_img_path = os.path.join(viz_dir, s['rel_path'])
+        os.makedirs(os.path.dirname(debug_img_path), exist_ok=True)
         
-        # Resume Logic (Check if debug text exists?)
-        # Simplification: Just check if we want to skip? 
-        # For now, let's run it.
+        # Resume Logic (Check if debug image already exists)
+        if os.path.exists(debug_img_path) and not args.force:
+            continue
         
         try:
             emb = strategy.generate_embedding(

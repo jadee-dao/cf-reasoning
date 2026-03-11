@@ -1206,7 +1206,7 @@ class ObjectGraphStrategy(EmbeddingStrategy):
     def load_model(self):
         if not self.model_loaded:
             print(f"Loading YOLOv11-seg...")
-            self.seg_model = YOLO("yolo11n-seg.pt")
+            self.seg_model = YOLO("yolo11n-seg.pt").to(get_device())
             
             print(f"Loading DepthAnythingV2...")
             from transformers import AutoImageProcessor, AutoModelForDepthEstimation
@@ -1379,15 +1379,21 @@ class ObjectGraphStrategy(EmbeddingStrategy):
             final_embedding = np.zeros(387, dtype=np.float32)
             
         # 8. Save Debug Info
-        if "debug_output_path" in kwargs:
-            # Save Graph JSON
-            graph_data = {"nodes": nodes, "edges": edges}
+        graph_data = {"nodes": nodes, "edges": edges}
+        
+        # Save Graph JSON specifically if requested
+        graph_path = kwargs.get("graph_output_path")
+        if not graph_path and "debug_output_path" in kwargs:
+             graph_path = kwargs["debug_output_path"].replace(".jpg", "_graph.json")
+             
+        if graph_path:
             import json
-            json_path = kwargs["debug_output_path"].replace(".jpg", "_graph.json")
-            with open(json_path, "w") as f:
+            os.makedirs(os.path.dirname(graph_path), exist_ok=True)
+            with open(graph_path, "w") as f:
                 json.dump(graph_data, f, indent=2)
-                
-            # Visualization
+
+        # Visualization specifically if requested
+        if "debug_output_path" in kwargs:
             vis_img = img_cv2.copy()
             
             # Draw Masks (Unique Colors)

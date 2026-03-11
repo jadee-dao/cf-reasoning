@@ -13,6 +13,7 @@ camera/
 .cache/
 
 checkpoints/
+*.log
 
 # Models
 *.pt

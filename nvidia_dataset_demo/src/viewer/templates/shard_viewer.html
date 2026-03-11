@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nvidia Shard Viewer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --accent-primary: #38bdf8;
+            --accent-secondary: #818cf8;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Sidebar Styles */
+        .sidebar {
+            width: 350px;
+            background-color: var(--card-bg);
+            border-right: 1px solid #334155;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            gap: 20px;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin: 0;
+            background: linear-gradient(to right, var(--accent-primary), var(--accent-secondary));
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .search-container {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .filter-options {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .filter-options input[type="checkbox"] {
+            cursor: pointer;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            background: #0f172a;
+            border: 1px solid #334155;
+            padding: 10px 15px;
+            border-radius: 8px;
+            color: white;
+            font-family: inherit;
+            box-sizing: border-box;
+        }
+
+        .sample-list {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding-right: 5px;
+        }
+
+        .sample-item {
+            padding: 12px;
+            background: #0f172a;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: 1px solid transparent;
+        }
+
+        .sample-item:hover {
+            transform: translateX(5px);
+            border-color: var(--accent-primary);
+        }
+
+        .sample-item.active {
+            background: linear-gradient(to right, rgba(56, 189, 248, 0.1), rgba(129, 140, 248, 0.1));
+            border-color: var(--accent-primary);
+        }
+
+        .sample-id {
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 4px;
+            word-break: break-all;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .star-icon {
+            color: var(--warning);
+            font-size: 1.1rem;
+        }
+
+        .sample-meta {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .sidebar {
+            width: 350px;
+            background-color: var(--card-bg);
+            border-right: 1px solid #334155;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            gap: 20px;
+        }
+
+        .star-btn {
+            background: none;
+            border: 1px solid #334155;
+            color: var(--text-secondary);
+            font-size: 1.2rem;
+            cursor: pointer;
+            padding: 2px 8px;
+            border-radius: 6px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .star-btn.active {
+            color: var(--warning);
+            border-color: var(--warning);
+            background: rgba(245, 158, 11, 0.1);
+        }
+
+        .star-btn:hover {
+            transform: scale(1.05);
+        }
+
+        .sort-options {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .sort-options select {
+            background: #1e293b;
+            border: 1px solid #334155;
+            color: var(--text-primary);
+            border-radius: 4px;
+            padding: 2px 5px;
+            outline: none;
+            cursor: pointer;
+        }
+
+        /* Main Content Styles */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            gap: 20px;
+            overflow-y: auto;
+        }
+
+        .viewer-container {
+            position: relative;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 540px;
+        }
+
+        #main-image {
+            max-width: 100%;
+            max-height: 80vh;
+            display: block;
+        }
+
+        #overlay-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+        }
+
+        .metrics-grid {
+            display: flex;
+            gap: 10px;
+            flex-wrap: nowrap;
+        }
+
+        .metric-card {
+            background: var(--card-bg);
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: 1px solid #334155;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            white-space: nowrap;
+        }
+
+        .metric-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+        }
+
+        .metric-value {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--accent-primary);
+        }
+
+        .bev-container {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid #334155;
+        }
+
+        #bev-canvas {
+            background: #0f172a;
+            border-radius: 8px;
+            display: block;
+            margin: 0 auto;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h1>Shard Viewer</h1>
+        <div class="search-container">
+            <input type="text" id="sample-search" placeholder="Search Sample ID..." oninput="filterSamples()">
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                <div class="filter-options">
+                    <input type="checkbox" id="starred-filter" onchange="filterSamples()">
+                    <label for="starred-filter">Show Starred Only</label>
+                </div>
+                <div class="sort-options">
+                    <label for="sort-select">Sort By:</label>
+                    <select id="sort-select" onchange="filterSamples()">
+                        <option value="default">Default</option>
+                        <option value="ade-desc">Highest ADE</option>
+                        <option value="ade-asc">Lowest ADE</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+        <div class="sample-list" id="sample-list">
+            <!-- Samples will be injected here -->
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="viewer-container" id="viewer-container">
+            <img id="main-image" src="" alt="Select a sample to view">
+            <canvas id="overlay-canvas"></canvas>
+        </div>
+
+        <div class="metrics-grid" id="metrics-grid">
+            <div class="metric-card" style="flex: 2; height: 40px; justify-content: space-between;">
+                <div style="display: flex; align-items: center; gap: 8px; overflow: hidden;">
+                    <span class="metric-label">Scene</span>
+                    <span class="metric-value" id="val-scene" style="font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; max-width: 250px;">-</span>
+                </div>
+                <button id="star-btn" class="star-btn" onclick="toggleStar()" title="Star Example">
+                    ★ <span style="font-size: 0.75rem; font-weight: 600;">Star</span>
+                </button>
+            </div>
+            <div class="metric-card" style="flex: 1; height: 40px;">
+                <span class="metric-label">ADE</span>
+                <span class="metric-value" id="val-ade">-</span>
+            </div>
+            <div class="metric-card" style="flex: 1; height: 40px;">
+                <span class="metric-label">Shard</span>
+                <span class="metric-value" id="val-shard" style="font-size: 0.85rem;">-</span>
+            </div>
+            <div class="metric-card" style="flex: 1; height: 40px;">
+                <span class="metric-label">Time</span>
+                <span class="metric-value" id="val-timestamp" style="font-size: 0.85rem;">-</span>
+            </div>
+        </div>
+
+        <div class="bev-container">
+            <div class="metric-label" style="margin-bottom: 10px;">Bird's Eye View (Waypoints)</div>
+            <canvas id="bev-canvas" width="400" height="400"></canvas>
+            <div style="display: flex; gap: 20px; justify-content: center; margin-top: 10px; font-size: 0.8rem;">
+                <div style="display: flex; align-items: center; gap: 5px;">
+                    <div style="width: 10px; height: 10px; background: #ff00ff; border-radius: 50%;"></div> Prediction
+                </div>
+                <div style="display: flex; align-items: center; gap: 5px;">
+                    <div style="width: 10px; height: 10px; background: #00ff00; border-radius: 50%;"></div> Ground Truth
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allSamples = [];
+        let filteredSamples = [];
+        let currentSample = null;
+
+        const img = document.getElementById('main-image');
+        const overlayCanvas = document.getElementById('overlay-canvas');
+        const bevCanvas = document.getElementById('bev-canvas');
+        const ctx = overlayCanvas.getContext('2d');
+        const bevCtx = bevCanvas.getContext('2d');
+
+        // Fetch sample list on load
+        window.onload = async () => {
+            const resp = await fetch('/api/nvidia/list');
+            allSamples = await resp.json();
+            filterSamples();
+        };
+
+        function filterSamples() {
+            const query = document.getElementById('sample-search').value.toLowerCase();
+            const starredOnly = document.getElementById('starred-filter').checked;
+            const sortBy = document.getElementById('sort-select').value;
+            
+            filteredSamples = allSamples.filter(s => {
+                const matchesSearch = s.sample_id.toLowerCase().includes(query);
+                const matchesStarred = !starredOnly || s.starred;
+                return matchesSearch && matchesStarred;
+            });
+
+            if (sortBy === 'ade-desc') {
+                filteredSamples.sort((a, b) => (b.ade || 0) - (a.ade || 0));
+            } else if (sortBy === 'ade-asc') {
+                filteredSamples.sort((a, b) => (a.ade || 0) - (b.ade || 0));
+            } else if (sortBy === 'default') {
+                // Keep original order from backend
+            }
+
+            renderSampleList();
+        }
+
+        function renderSampleList() {
+            const list = document.getElementById('sample-list');
+            list.innerHTML = '';
+            filteredSamples.slice(0, 100).forEach(s => {
+                const item = document.createElement('div');
+                item.className = 'sample-item' + (currentSample && currentSample.sample_id === s.sample_id ? ' active' : '');
+                const adeStr = s.ade !== undefined ? `<span style="color: var(--accent-primary); font-family: monospace;">${s.ade.toFixed(4)}</span>` : '';
+                item.innerHTML = `
+                    <div class="sample-id">
+                        ${s.scene_id}
+                        ${s.starred ? '<span class="star-icon">★</span>' : ''}
+                    </div>
+                    <div class="sample-meta">
+                        <span>${s.shard} • ${s.timestamp}</span>
+                        ${adeStr}
+                    </div>
+                `;
+                item.onclick = () => loadSample(s);
+                list.appendChild(item);
+            });
+        }
+
+        async function loadSample(sample) {
+            currentSample = sample;
+            renderSampleList();
+
+            // Load Data
+            const dataResp = await fetch(`/api/nvidia/data/${sample.shard}/${sample.scene_id}/${sample.timestamp}`);
+            const data = await dataResp.json();
+
+            // Load Image
+            img.src = `/api/nvidia/image/${sample.sample_id}`;
+            img.onload = () => {
+                resizeCanvas();
+                drawOverlays(data);
+            };
+
+            // Update Metrics
+            document.getElementById('val-ade').textContent = data.info.ADE ? data.info.ADE.toFixed(4) : 'N/A';
+            document.getElementById('val-scene').textContent = data.info.scene_id;
+            document.getElementById('val-shard').textContent = sample.shard;
+            document.getElementById('val-timestamp').textContent = data.info.timestamp_us;
+
+            // Update Star Button
+            const starBtn = document.getElementById('star-btn');
+            if (sample.starred) {
+                starBtn.classList.add('active');
+                starBtn.querySelector('span').textContent = 'Starred';
+            } else {
+                starBtn.classList.remove('active');
+                starBtn.querySelector('span').textContent = 'Star';
+            }
+
+            drawBEV(data.info);
+        }
+
+        async function toggleStar() {
+            if (!currentSample) return;
+
+            const newState = !currentSample.starred;
+            const resp = await fetch('/api/nvidia/star', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sample_id: currentSample.sample_id,
+                    starred: newState
+                })
+            });
+
+            if (resp.ok) {
+                currentSample.starred = newState;
+                
+                // Update in allSamples list too
+                const sampleInList = allSamples.find(s => s.sample_id === currentSample.sample_id);
+                if (sampleInList) sampleInList.starred = newState;
+
+                // Refresh UI
+                const starBtn = document.getElementById('star-btn');
+                if (newState) {
+                    starBtn.classList.add('active');
+                    starBtn.querySelector('span').textContent = 'Starred';
+                } else {
+                    starBtn.classList.remove('active');
+                    starBtn.querySelector('span').textContent = 'Star';
+                }
+                
+                renderSampleList();
+            }
+        }
+
+        function resizeCanvas() {
+            overlayCanvas.width = img.clientWidth;
+            overlayCanvas.height = img.clientHeight;
+            overlayCanvas.style.left = img.offsetLeft + 'px';
+            overlayCanvas.style.top = img.offsetTop + 'px';
+        }
+
+        window.onresize = resizeCanvas;
+
+        function drawOverlays(data) {
+            ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            
+            if (!data.graph || !data.graph.nodes) return;
+
+            const w = overlayCanvas.width;
+            const h = overlayCanvas.height;
+
+            data.graph.nodes.forEach(node => {
+                if (!node.pos) return;
+
+                const [x_norm, y_norm] = node.pos;
+                const x = x_norm * w;
+                const y = y_norm * h;
+
+                // Set styles based on class
+                let color = '#38bdf8'; // Default car
+                if (node.id === 'ego') color = '#fbbf24'; // Ego
+                
+                // Draw circle
+                ctx.beginPath();
+                ctx.arc(x, y, 6, 0, Math.PI * 2);
+                ctx.fillStyle = color;
+                ctx.fill();
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Draw Label
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 12px Outfit';
+                ctx.fillText(node.label || node.id, x + 10, y + 4);
+                
+                // Draw distance if available
+                if (node.depth) {
+                    ctx.font = '10px Outfit';
+                    ctx.fillStyle = '#94a3b8';
+                    ctx.fillText(`${node.depth.toFixed(1)}m`, x + 10, y + 16);
+                }
+            });
+        }
+
+        function drawBEV(info) {
+            const w = bevCanvas.width;
+            const h = bevCanvas.height;
+            const margin = 20;
+            const centerX = w / 2;
+            const originY = h - margin;
+
+            bevCtx.clearRect(0, 0, w, h);
+
+            // Draw grid lines
+            bevCtx.strokeStyle = '#334155';
+            bevCtx.lineWidth = 1;
+            
+            const scale = 12.0; // Increased scale (12 pixels per meter) for better zoom
+
+            // Draw concentric distance circles
+            for(let i=1; i<=5; i++) {
+                const radius = i * 5 * scale; // 5m intervals
+                if (radius > Math.max(w, h)) break;
+                
+                bevCtx.beginPath();
+                bevCtx.arc(centerX, originY, radius, Math.PI, 0);
+                bevCtx.stroke();
+                
+                bevCtx.fillStyle = '#64748b';
+                bevCtx.font = '10px Outfit';
+                bevCtx.fillText(`${i*5}m`, centerX + radius - 10, originY + 15);
+            }
+
+            // Draw Ego Vehicle (Center Reference)
+            bevCtx.fillStyle = '#ffffff';
+            bevCtx.beginPath();
+            bevCtx.arc(centerX, originY, 6, 0, Math.PI * 2);
+            bevCtx.fill();
+            bevCtx.strokeStyle = '#000';
+            bevCtx.stroke();
+            bevCtx.fillText('Ego', centerX - 10, originY + 25);
+
+            // Draw Ground Truth Waypoints (High Contrast Neon Green)
+            if (info.ground_truth_waypoints && info.ground_truth_waypoints.length > 0) {
+                bevCtx.strokeStyle = '#00ff00';
+                bevCtx.lineWidth = 4;
+                bevCtx.setLineDash([]); // Solid line for ground truth
+                bevCtx.beginPath();
+                bevCtx.moveTo(centerX, originY);
+                
+                info.ground_truth_waypoints.forEach(wp => {
+                    const px = centerX - (wp[1] * scale);
+                    const py = originY - (wp[0] * scale);
+                    bevCtx.lineTo(px, py);
+                });
+                bevCtx.stroke();
+
+                // Draw points
+                info.ground_truth_waypoints.forEach(wp => {
+                    const px = centerX - (wp[1] * scale);
+                    const py = originY - (wp[0] * scale);
+                    bevCtx.fillStyle = '#00ff00';
+                    bevCtx.beginPath();
+                    bevCtx.arc(px, py, 5, 0, Math.PI * 2);
+                    bevCtx.fill();
+                    bevCtx.strokeStyle = 'white';
+                    bevCtx.lineWidth = 1;
+                    bevCtx.stroke();
+                });
+            }
+
+            // Draw Predicted Waypoints (High Contrast Magenta) - DRAWN ON TOP
+            if (info.prediction_waypoints && info.prediction_waypoints.length > 0) {
+                bevCtx.strokeStyle = '#ff00ff';
+                bevCtx.lineWidth = 3;
+                bevCtx.setLineDash([5, 3]); // Dashed line for prediction
+                bevCtx.beginPath();
+                bevCtx.moveTo(centerX, originY);
+                
+                info.prediction_waypoints.forEach(wp => {
+                    const px = centerX - (wp[1] * scale);
+                    const py = originY - (wp[0] * scale);
+                    bevCtx.lineTo(px, py);
+                });
+                bevCtx.stroke();
+
+                // Draw points on top of lines
+                bevCtx.setLineDash([]);
+                info.prediction_waypoints.forEach(wp => {
+                    const px = centerX - (wp[1] * scale);
+                    const py = originY - (wp[0] * scale);
+                    bevCtx.fillStyle = '#ff00ff';
+                    bevCtx.beginPath();
+                    bevCtx.arc(px, py, 4, 0, Math.PI * 2);
+                    bevCtx.fill();
+                    bevCtx.strokeStyle = 'white';
+                    bevCtx.lineWidth = 1;
+                    bevCtx.stroke();
+                });
+            }
+        }
+    </script>
+</body>
+</html>
